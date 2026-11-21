@@ -7,7 +7,7 @@ import re
 import secrets
 import threading
 
-from flask import (Blueprint, abort, redirect, render_template, request)
+from flask import (Blueprint, abort, redirect, render_template, request, session)
 
 from db import get_db, NOVEL_DIR
 from helpers import current_user, is_privileged, login_required, msg_page, now_str
@@ -28,6 +28,10 @@ _CH_RE = re.compile(
     r"^\s*(第\s*[0-9０-９一二三四五六七八九十百千万零〇两]+\s*[章节回卷集部篇]\s*\S.{0,40}"
     r"|序章\s*\S.{0,30}|楔子\s*\S.{0,30}|引子\s*\S.{0,30}"
     r"|尾声\s*\S.{0,30}|后记\s*\S.{0,30}|番外\s*\S.{0,30})\s*$")
+
+# 章节分隔符：一行以 #==# 开头，其后为章节标题
+_CH_SEP_RE = re.compile(r"^#==#(.*)$")
+PROGRESS_SESSION_KEY = "prog"
 
 
 def _used_bytes(db, uid):
@@ -52,7 +56,25 @@ def _decode_text(data):
 
 
 def _detect_chapters(text):
-    """返回 [{'t': 标题, 'o': 字符偏移}]；不足两章视为无章节。"""
+    """返回 [{'t': 标题, 'o': 内容起始偏移}]。
+    优先解析 '#==#标题' 分隔符（分隔符行本身不计入正文，首个分隔符前的
+    非空正文记为「前言」）；否则回退到「第 X 章」类标题，不足两章视为无章节。"""
+    sep_chapters = []
+    offset = 0
+    first_sep_start = None
+    for line in text.split("\n"):
+        m = _CH_SEP_RE.match(line.rstrip())
+        if m:
+            if first_sep_start is None:
+                first_sep_start = offset
+            title = (m.group(1).strip() or "未命名")[:50]
+            # o = 内容起始；s = 分隔符行起始（供上一章裁剪到分隔符前）
+            sep_chapters.append({"t": title, "o": offset + len(line) + 1, "s": offset})
+        offset += len(line) + 1
+    if sep_chapters:
+        if first_sep_start and text[:first_sep_start].strip():
+            sep_chapters.insert(0, {"t": "前言", "o": 0})
+        return sep_chapters
     found = []
     offset = 0
     for line in text.split("\n"):
@@ -90,6 +112,46 @@ def _quota_view(user):
     return privileged, used, (None if privileged else QUOTA_BYTES)
 
 
+def _save_progress(user, novel, ci, pi):
+    """记录阅读进度：登录用户写入数据库，游客存于会话 Cookie（最多 20 本）。"""
+    if user:
+        db = get_db()
+        db.execute(
+            "INSERT INTO reading_progress(user_id,novel_id,ci,page,updated_at) "
+            "VALUES(?,?,?,?,?) ON CONFLICT(user_id,novel_id) DO UPDATE SET "
+            "ci=excluded.ci, page=excluded.page, updated_at=excluded.updated_at",
+            (user["id"], novel["id"], ci, pi, now_str()))
+        db.commit()
+    else:
+        prog = dict(session.get(PROGRESS_SESSION_KEY) or {})
+        prog[novel["code"]] = [ci, pi]
+        if len(prog) > 20:
+            prog = dict(list(prog.items())[-20:])
+        session[PROGRESS_SESSION_KEY] = prog
+
+
+def _get_progress(user, novel):
+    """返回 (章序号, 页序号) 或 None。"""
+    if user:
+        row = get_db().execute(
+            "SELECT ci, page FROM reading_progress WHERE user_id=? AND novel_id=?",
+            (user["id"], novel["id"])).fetchone()
+        return (row["ci"], row["page"]) if row else None
+    v = (session.get(PROGRESS_SESSION_KEY) or {}).get(novel["code"])
+    return tuple(v) if v else None
+
+
+def _progress_label(progress, chapters):
+    """进度展示文字，例如「第二章 第2页」。"""
+    if not progress:
+        return ""
+    ci, pi = progress
+    if chapters:
+        ci = min(max(ci, 0), len(chapters) - 1)
+        return "%s 第%d页" % (chapters[ci]["t"], pi)
+    return "第%d页" % pi
+
+
 def _drop_cache(novel_id):
     with _TEXT_CACHE_LOCK:
         _TEXT_CACHE.pop(novel_id, None)
@@ -112,7 +174,11 @@ def _chapter_slice(text, chapters, ci):
     if not chapters:
         return text
     start = chapters[ci]["o"]
-    end = chapters[ci + 1]["o"] if ci + 1 < len(chapters) else len(text)
+    if ci + 1 < len(chapters):
+        nxt = chapters[ci + 1]
+        end = nxt.get("s", nxt["o"])     # #==# 章：裁到下一分隔符行前
+    else:
+        end = len(text)
     return text[start:end]
 
 
@@ -126,9 +192,16 @@ def shelf():
         "SELECT * FROM novels WHERE owner_id=? ORDER BY id DESC",
         (user["id"],)).fetchall()
     novels = []
+    prog_rows = get_db().execute(
+        "SELECT novel_id, ci, page FROM reading_progress WHERE user_id=?",
+        (user["id"],)).fetchall()
+    prog_map = {r["novel_id"]: (r["ci"], r["page"]) for r in prog_rows}
     for row in rows:
         n = dict(row)
         n["nchapters"] = len(json.loads(n["chapters"] or "[]"))
+        n["prog"] = prog_map.get(n["id"])
+        n["prog_label"] = _progress_label(n["prog"],
+                                          json.loads(n["chapters"] or "[]"))
         novels.append(n)
     return render_template("novel/index.html", novels=novels,
                            privileged=privileged, used_kb=used // 1024,
@@ -202,9 +275,12 @@ def view(code):
     chapters = json.loads(novel["chapters"] or "[]")
     user = current_user()
     is_owner = bool(user and user["id"] == novel["owner_id"])
+    progress = _get_progress(user, novel)
+    prog_label = _progress_label(progress, chapters)
     return render_template("novel/view.html", novel=novel,
                            owner_name=(owner["username"] if owner else "未知"),
-                           nchapters=len(chapters), is_owner=is_owner)
+                           nchapters=len(chapters), is_owner=is_owner,
+                           progress=progress, prog_label=prog_label)
 
 
 @bp.route("/n/<code>/chapters")
@@ -242,6 +318,8 @@ def read(code):
     ci = min(ci, len(chapters) - 1)
     pages = _split_pages(_chapter_slice(text, chapters, ci))
     pi = min(pi, len(pages))
+    user = current_user()
+    _save_progress(user, novel, ci, pi)
     return render_template("novel/read.html", novel=novel,
                            chapter=chapters[ci], ci=ci, nchapters=len(chapters),
                            content=pages[pi - 1], page=pi, pages=len(pages),

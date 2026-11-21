@@ -52,6 +52,14 @@ CREATE TABLE IF NOT EXISTS novels (
     views INTEGER DEFAULT 0,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS reading_progress (
+    user_id INTEGER NOT NULL,
+    novel_id INTEGER NOT NULL,
+    ci INTEGER NOT NULL DEFAULT 0,
+    page INTEGER NOT NULL DEFAULT 1,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(user_id, novel_id)
+);
 """
 
 

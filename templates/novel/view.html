@@ -4,6 +4,9 @@
 <h2>{{ novel.title }}</h2>
 <p>上传者: {{ owner_name }} · {{ (novel.size/1024)|round(1) }}KB{% if nchapters %} · 共{{ nchapters }}章{% endif %} · 阅读{{ novel.views }}次</p>
 <p>[<a href="/n/{{ novel.code }}/read?c=0&p=1">开始阅读</a>]{% if nchapters %} [<a href="/n/{{ novel.code }}/chapters">章节目录</a>]{% endif %}</p>
+{% if progress %}
+<p>[<a href="/n/{{ novel.code }}/read?c={{ progress[0] }}&p={{ progress[1] }}">继续阅读</a>]（{{ prog_label }}）</p>
+{% endif %}
 <p>把下面的链接发给朋友，免登录即可阅读:<br>
 <b>{{ request.host_url }}n/{{ novel.code }}</b></p>
 {% if is_owner %}

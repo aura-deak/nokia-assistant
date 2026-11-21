@@ -181,6 +181,22 @@ check("小说每页不超500字", all(len(p) <= PAGE_CHARS for p in npages),
       max(len(p) for p in npages))
 check("小说分页拼接还原原文", "".join(npages) == ntext, "")
 
+# 章节分隔符 #==#title 单元测试
+from novels import _detect_chapters, _chapter_slice
+sep_text = ("前言内容两行\n#==#第一章 开端\n" + "甲" * 300
+            + "\n#==#第二章 发展\n" + "乙" * 600 + "\n")
+schs = _detect_chapters(sep_text)
+check("分隔符章节数(前言+2章)", len(schs) == 3, str([c["t"] for c in schs]))
+check("分隔符标题解析", [c["t"] for c in schs] == ["前言", "第一章 开端", "第二章 发展"],
+      str(schs))
+c1 = _chapter_slice(sep_text, schs, 1).strip()
+c2 = _chapter_slice(sep_text, schs, 2).strip()
+check("章节内容不含分隔符", "#==#" not in c1 and "#==#" not in c2, c1[:40])
+check("第一章300字一页", len(c1) == 300 and len(_split_pages(c1)) == 1, str(len(c1)))
+check("第二章600字分2页", len(c2) == 600
+      and [len(p) for p in _split_pages(c2)] == [500, 100],
+      str([len(p) for p in _split_pages(c2)]))
+
 # ---- 3. 网页代理（在线） ----
 r = s.get(BASE + "/browse", params={"url": "https://example.com"})
 check("代理example.com成功", "Example Domain" in r.text and "example" in r.text.lower(), r.text)
@@ -434,6 +450,32 @@ r = s.post(BASE + "/novel/%s/delete" % nid)
 check("删除后链接失效", requests.get(BASE + "/n/" + gcode).status_code == 404)
 r = s.get(BASE + "/novel")
 check("书架不再显示已删小说", GBK_TITLE not in r.text, r.text)
+
+# ---- 5c. 章节分隔符 #==#title 与阅读进度 ----
+sep_novel = ("序言文字\n#==#第一章 开端\n" + "甲" * 300
+             + "\n#==#第二章 发展\n" + "乙" * 600)
+r = s.post(BASE + "/novel/upload", data={"title": "分隔符小说", "content": sep_novel},
+           allow_redirects=False)
+scode = r.headers["Location"].split("/n/")[1]
+r = s.get(BASE + "/n/%s/chapters" % scode)
+check("目录显示分隔符章节", "前言" in r.text and "第一章 开端" in r.text
+      and "第二章 发展" in r.text, r.text)
+r = s.get(BASE + "/n/%s/read?c=2&p=2" % scode)
+check("600字章节第2页存在", "第2/2页" in r.text, r.text[:300])
+# 登录用户进度入库
+r = s.get(BASE + "/n/%s" % scode)
+check("书页显示继续阅读", "继续阅读" in r.text and "c=2&p=2" in r.text, r.text)
+check("进度标签含章节与页码", "第二章 发展 第2页" in r.text, r.text)
+r = s.get(BASE + "/novel")
+check("书架显示继续阅读", "继续阅读" in r.text, r.text)
+# 游客进度存会话
+g2 = requests.Session()
+g2.get(BASE + "/n/%s/read?c=1&p=1" % scode)
+r = g2.get(BASE + "/n/%s" % scode)
+check("游客进度保存在会话", "继续阅读" in r.text and "c=1&p=1" in r.text, r.text)
+# 清理
+mid = re.search(r"/novel/(\d+)/delete", s.get(BASE + "/n/%s" % scode).text).group(1)
+s.post(BASE + "/novel/%s/delete" % mid)
 
 # ---- 5b. 书库配额：普通用户 2MB，特权用户无上限 ----
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")

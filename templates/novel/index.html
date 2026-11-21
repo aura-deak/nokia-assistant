@@ -20,6 +20,7 @@
 <p><a href="/n/{{ n.code }}">{{ n.title }}</a><br>
 {{ (n.size/1024)|round(1) }}KB · {{ n.nchapters }}章 · 阅读{{ n.views }}次<br>
 [<a href="/n/{{ n.code }}/read?c=0&p=1">阅读</a>]
+{% if n.prog %}[<a href="/n/{{ n.code }}/read?c={{ n.prog[0] }}&p={{ n.prog[1] }}">继续阅读</a>]{% endif %}
 [<a href="/n/{{ n.code }}/chapters">目录</a>]
 [<a href="/n/{{ n.code }}">分享链接</a>]
 [<a href="/novel/{{ n.id }}/delete">删除</a>]</p>
