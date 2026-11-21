@@ -477,6 +477,31 @@ check("游客进度保存在会话", "继续阅读" in r.text and "c=1&p=1" in r
 mid = re.search(r"/novel/(\d+)/delete", s.get(BASE + "/n/%s" % scode).text).group(1)
 s.post(BASE + "/novel/%s/delete" % mid)
 
+# ---- 5d. 同名书分段追加 ----
+seg1 = "#==#第一章 A\n" + "一" * 500 + "\n#==#第二章 B\n" + "二" * 500
+r = s.post(BASE + "/novel/upload", data={"title": "分段书", "content": seg1},
+           allow_redirects=False)
+code_a = r.headers["Location"].split("/n/")[1]
+seg2 = "#==#第三章 C\n" + "三" * 500
+r = s.post(BASE + "/novel/upload", data={"title": "分段书", "content": seg2},
+           allow_redirects=False)
+check("同名上传跳同一本书", r.headers["Location"].split("/n/")[1] == code_a,
+      r.headers.get("Location", ""))
+r = s.get(BASE + "/n/%s/chapters" % code_a)
+check("分段后章节合并", "第一章 A" in r.text and "第二章 B" in r.text
+      and "第三章 C" in r.text, r.text)
+check("书架只显示一本分段书", s.get(BASE + "/novel").text.count("分段书") == 1, "")
+r = s.get(BASE + "/n/%s/read?c=2&p=1" % code_a)
+check("追加的章节可阅读", "三" in r.text, r.text[:200])
+r = s.post(BASE + "/novel/upload", data={"title": "分段书二", "content": "另一本"},
+           allow_redirects=False)
+check("不同名新建一本", r.headers["Location"].split("/n/")[1] != code_a, "")
+# 清理
+for c2 in (code_a, r.headers["Location"].split("/n/")[1]):
+    m2 = re.search(r"/novel/(\d+)/delete", s.get(BASE + "/n/%s" % c2).text)
+    if m2:
+        s.post(BASE + "/novel/%s/delete" % m2.group(1))
+
 # ---- 5b. 书库配额：普通用户 2MB，特权用户无上限 ----
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 orig_cfg = open(CONFIG_PATH, encoding="utf-8").read()

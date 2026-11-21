@@ -15,6 +15,7 @@ from helpers import current_user, is_privileged, login_required, msg_page, now_s
 bp = Blueprint("novel", __name__)
 
 MAX_NOVEL_BYTES = 15 * 1024 * 1024
+MAX_TOTAL_BYTES = 50 * 1024 * 1024   # 同名单本分段上传累计上限
 PAGE_CHARS = 500           # 阅读页每页字符数（硬切）
 CHAPTERS_PER_PAGE = 40     # 目录每页章节数
 QUOTA_BYTES = 2 * 1024 * 1024   # 普通用户书库总容量；特权用户无上限
@@ -243,8 +244,40 @@ def upload():
                          "请先在书架删除部分小说，或联系管理员把你加入特权用户。"],
                         back="/novel")
     text = _decode_text(data).replace("\r\n", "\n").replace("\r", "\n").strip("\ufeff")
-    chapters = _detect_chapters(text)
     db = get_db()
+
+    # 同名书追加分段：内容拼到原书末尾并重新切章，不新建一本
+    existing = db.execute(
+        "SELECT * FROM novels WHERE owner_id=? AND title=? ORDER BY id DESC LIMIT 1",
+        (user["id"], title)).fetchone()
+    if existing:
+        if existing["size"] + len(data) > MAX_TOTAL_BYTES:
+            return msg_page("文件过大",
+                            ["同一本书分段上传后总大小不能超过 50MB。",
+                             "当前已含 %.1fMB，本次 %dKB。"
+                             % (existing["size"] / 1048576, len(data) // 1024)],
+                            back="/novel/upload")
+        old_text = _get_text(existing["id"]) or ""
+        merged = old_text
+        if merged and not merged.endswith("\n"):
+            merged += "\n"
+        merged += text
+        chapters = _detect_chapters(merged)
+        path = os.path.join(NOVEL_DIR, "%d.txt" % existing["id"])
+        try:
+            with open(path, "wb") as out:
+                out.write(merged.encode("utf-8"))
+        except OSError:
+            return msg_page("保存失败", ["服务器写入文件失败，请重试"], back="/novel/upload")
+        db.execute(
+            "UPDATE novels SET size=size+?, char_count=?, chapters=? WHERE id=?",
+            (len(data), len(merged), json.dumps(chapters, ensure_ascii=False),
+             existing["id"]))
+        db.commit()
+        _drop_cache(existing["id"])
+        return redirect("/n/%s" % existing["code"])
+
+    chapters = _detect_chapters(text)
     code = secrets.token_hex(6)
     cur = db.execute(
         "INSERT INTO novels(owner_id,code,title,size,char_count,chapters,views,created_at) "
