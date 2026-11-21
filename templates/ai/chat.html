@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}{{ conv.title }} - AI 对话{% endblock %}
+{% block body %}
+<p>[<a href="/ai/">返回列表</a>] [<a href="/ai/c/{{ conv.id }}">刷新本页</a>]</p>
+{% if not user %}<p>游客模式 [<a href="/login">登录</a>]</p>{% endif %}
+<h2>{{ conv.title }}</h2>
+{% for m in msgs %}
+{% if m.role == 'user' %}
+<p><b>你:</b> {{ m.content|nl2br }}</p>
+{% elif m.status == 'pending' %}
+<p><b>AI:</b> （正在生成回复，请稍后点顶部「刷新本页」）</p>
+{% elif m.status == 'error' %}
+<p><b>AI:</b> 生成失败: {{ m.content|nl2br }}</p>
+<form method="post" action="/ai/c/{{ conv.id }}/retry">
+<p><input type="submit" value="重试"></p>
+</form>
+{% else %}
+<p><b>AI:</b> {{ m.content|nl2br }}<br><small>[模型: {{ m.model|aidisplay }}]</small></p>
+{% endif %}
+{% endfor %}
+<hr>
+<form method="post" action="/ai/c/{{ conv.id }}/send">
+{% if opts %}
+<p>模型:<br>
+<select name="model">
+{% for v, t in opts %}
+<option value="{{ v }}"{% if v == default_model %} selected{% endif %}>{{ t }}</option>
+{% endfor %}
+</select></p>
+{% endif %}
+<p><textarea name="content" rows="4" cols="28"></textarea></p>
+<p><input type="submit" value="发送"></p>
+</form>
+<form method="post" action="/ai/c/{{ conv.id }}/delete">
+<p><input type="submit" value="删除本会话"></p>
+</form>
+{% endblock %}

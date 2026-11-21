@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}注册 - 诺基亚助手{% endblock %}
+{% block body %}
+<h2>注册</h2>
+{% if error %}<p><b>{{ error }}</b></p>{% endif %}
+<form method="post" action="/register">
+<p>用户名: <input type="text" name="username" size="20"><br>(2-16位字母/数字/下划线/中文)</p>
+<p>密　码: <input type="password" name="password" size="20"><br>(4-64位)</p>
+<p><input type="submit" value="注册并登录"></p>
+</form>
+<p>已有账号？[<a href="/login">登录</a>]</p>
+{% endblock %}

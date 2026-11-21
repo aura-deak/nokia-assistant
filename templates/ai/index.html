@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}AI 对话 - 诺基亚助手{% endblock %}
+{% block body %}
+<h2>AI 对话</h2>
+{% if not user %}
+<p>游客模式：可直接使用内置免费模型。回复生成后点「刷新本页」查看。</p>
+<p>登录后还可导入自己的接口。[<a href="/login">登录</a>]</p>
+{% else %}
+<p>[<a href="/ai/settings">AI 设置（个人接口）</a>] 免费模型无需配置可直接用。</p>
+{% endif %}
+<hr>
+{% if opts %}
+<p><b>开始新会话</b></p>
+<form method="post" action="/ai/new">
+<p>模型:<br>
+<select name="model">
+{% for v, t in opts %}
+<option value="{{ v }}"{% if v == default_model %} selected{% endif %}>{{ t }}</option>
+{% endfor %}
+</select></p>
+<p><textarea name="content" rows="4" cols="28"></textarea></p>
+<p><input type="submit" value="发送"></p>
+</form>
+{% else %}
+<p>服务器未配置可用模型，请联系管理员。</p>
+{% endif %}
+<hr>
+<p><b>历史会话</b></p>
+{% if convs %}
+{% for c in convs %}
+<p>[<a href="/ai/c/{{ c.id }}">{{ c.title }}</a>]<br>{{ c.updated_at }}</p>
+{% endfor %}
+{% else %}
+<p>还没有会话。发送第一条消息即可创建。</p>
+{% endif %}
+{% endblock %}

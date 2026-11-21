@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}上传小说 - 诺基亚助手{% endblock %}
+{% block body %}
+<p>[<a href="/novel">返回书架</a>]</p>
+<h2>上传小说</h2>
+<p>支持 TXT 文件（UTF-8/GBK/Big5 自动识别）或直接粘贴文本，最大 15MB。</p>
+{% if privileged %}
+<p>你是特权用户，书库容量无限制（已用 {{ used_kb }}KB）。</p>
+{% else %}
+<p>书库容量：已用 {{ used_kb }}KB / {{ quota_kb }}KB。超出将无法上传。</p>
+{% endif %}
+<form method="post" action="/novel/upload" enctype="multipart/form-data">
+<p>书名(可选):<br><input type="text" name="title" size="28"></p>
+<p>选择文件:<br><input type="file" name="novel_file"></p>
+<p>或直接粘贴文本:<br><textarea name="content" rows="8" cols="28"></textarea></p>
+<p><input type="submit" value="上传"></p>
+</form>
+{% endblock %}

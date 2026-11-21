@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}{{ novel.title }} - {{ chapter.t }}{% endblock %}
+{% block body %}
+<p>[<a href="/n/{{ novel.code }}">书页</a>]{% if has_chapters %} [<a href="/n/{{ novel.code }}/chapters">目录</a>]{% endif %}
+[<a href="/n/{{ novel.code }}/read?c={{ ci }}&p={{ page }}">刷新</a>]</p>
+<h3>{{ chapter.t }}</h3>
+{{ content|nl2br }}
+<hr>
+<p>{% if page>1 %}[<a href="/n/{{ novel.code }}/read?c={{ ci }}&p={{ page-1 }}">上一页</a>]{% elif ci>0 %}[<a href="/n/{{ novel.code }}/read?c={{ ci-1 }}&p=1">上一章</a>]{% endif %}
+第{{ page }}/{{ pages }}页
+{% if page<pages %}[<a href="/n/{{ novel.code }}/read?c={{ ci }}&p={{ page+1 }}">下一页</a>]{% elif ci+1<nchapters %}[<a href="/n/{{ novel.code }}/read?c={{ ci+1 }}&p=1">下一章</a>]{% endif %}</p>
+<p>[<a href="/n/{{ novel.code }}">返回书页</a>]</p>
+{% endblock %}

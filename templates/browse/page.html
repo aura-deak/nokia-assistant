@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} - 浏览{% endblock %}
+{% block body %}
+<p><b>{{ title }}</b></p>
+<p>第{{ page }}/{{ total_pages }}页
+{% if prev_url %}[<a href="{{ prev_url }}">上一页</a>]{% endif %}
+{% if next_url %}[<a href="{{ next_url }}">下一页</a>]{% endif %}</p>
+<hr>
+{{ body_html|safe }}
+<hr>
+<p>{% if prev_url %}[<a href="{{ prev_url }}">上一页</a>]{% endif %}
+{% if next_url %}[<a href="{{ next_url }}">下一页</a>]{% endif %}
+[<a href="/browse">输入网址</a>] [<a href="{{ url }}">原文</a>]</p>
+{% endblock %}

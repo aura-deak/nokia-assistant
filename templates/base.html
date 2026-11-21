@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>{% block title %}诺基亚助手{% endblock %}</title>
+</head>
+<body>
+{% if g_user %}<p>用户: {{ g_user.username }} [<a href="/logout">退出</a>]</p>{% else %}<p>[<a href="/login">登录</a>] [<a href="/register">注册</a>]</p>{% endif %}
+<hr>
+{% block body %}{% endblock %}
+<hr>
+<p>[<a href="/" accesskey="0">主页</a>] [<a href="/browse" accesskey="1">浏览</a>] [<a href="/ai/" accesskey="2">AI</a>] [<a href="/novel" accesskey="3">小说</a>]</p>
+</body>
+</html>

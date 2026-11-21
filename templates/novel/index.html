@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}云小说 - 诺基亚助手{% endblock %}
+{% block body %}
+<h2>云小说</h2>
+{% if novels is none %}
+<p>登录后可上传小说、管理书架。</p>
+<p>朋友分享了小说链接？直接打开链接即可阅读，无需登录。</p>
+<p>[<a href="/login">登录</a>] [<a href="/register">注册</a>]</p>
+{% else %}
+<p>[<a href="/novel/upload">上传小说</a>]</p>
+{% if privileged %}
+<p>特权账号，书库容量无限制。已用 {{ used_kb }}KB。</p>
+{% else %}
+<p>书库容量：已用 {{ used_kb }}KB / {{ quota_kb }}KB。</p>
+{% endif %}
+<hr>
+<p><b>我的书架</b></p>
+{% if novels %}
+{% for n in novels %}
+<p><a href="/n/{{ n.code }}">{{ n.title }}</a><br>
+{{ (n.size/1024)|round(1) }}KB · {{ n.nchapters }}章 · 阅读{{ n.views }}次<br>
+[<a href="/n/{{ n.code }}/read?c=0&p=1">阅读</a>]
+[<a href="/n/{{ n.code }}/chapters">目录</a>]
+[<a href="/n/{{ n.code }}">分享链接</a>]
+[<a href="/novel/{{ n.id }}/delete">删除</a>]</p>
+{% endfor %}
+{% else %}
+<p>书架是空的，去上传一本吧。</p>
+{% endif %}
+{% endif %}
+{% endblock %}

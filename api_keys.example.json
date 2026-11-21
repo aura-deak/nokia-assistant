@@ -1,0 +1,22 @@
+{
+  "free_groups": [
+    {
+      "name": "Radeon",
+      "base_url": "https://developer.amd.com.cn/radeon/api/v1",
+      "api_key": "填入密钥",
+      "models": ["GLM-5.3-Flash", "Qwen3.8-Flash-Next", "DeepSeek-V4-Flash"]
+    },
+    {
+      "name": "NVIDIA NIM",
+      "base_url": "https://integrate.api.nvidia.com/v1",
+      "api_key": "填入密钥",
+      "models": ["nvidia/nemotron-3-super-120b-a12b"]
+    }
+  ],
+  "magpie": {
+    "name": "Magpie 本地聚合",
+    "base_url": "http://127.0.0.1:1234/v1",
+    "api_key": "填入密钥",
+    "models": ["auto/deepseek-v4-pro", "auto/kimi-k3"]
+  }
+}

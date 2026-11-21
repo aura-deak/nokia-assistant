@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}{{ novel.title }} - 云小说{% endblock %}
+{% block body %}
+<h2>{{ novel.title }}</h2>
+<p>上传者: {{ owner_name }} · {{ (novel.size/1024)|round(1) }}KB{% if nchapters %} · 共{{ nchapters }}章{% endif %} · 阅读{{ novel.views }}次</p>
+<p>[<a href="/n/{{ novel.code }}/read?c=0&p=1">开始阅读</a>]{% if nchapters %} [<a href="/n/{{ novel.code }}/chapters">章节目录</a>]{% endif %}</p>
+<p>把下面的链接发给朋友，免登录即可阅读:<br>
+<b>{{ request.host_url }}n/{{ novel.code }}</b></p>
+{% if is_owner %}
+<p>[<a href="/novel/{{ novel.id }}/delete">删除此书</a>] [<a href="/novel">我的书架</a>]</p>
+{% endif %}
+{% endblock %}

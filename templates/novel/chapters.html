@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}{{ novel.title }} · 目录{% endblock %}
+{% block body %}
+<p>[<a href="/n/{{ novel.code }}">返回书页</a>]</p>
+<h2>{{ novel.title }} · 目录</h2>
+{% for ch in part %}
+<p>[<a href="/n/{{ novel.code }}/read?c={{ (cp-1)*40 + loop.index0 }}&p=1">{{ ch.t }}</a>]</p>
+{% endfor %}
+<hr>
+<p>{% if cp>1 %}[<a href="/n/{{ novel.code }}/chapters?cp={{ cp-1 }}">上一页</a>]{% endif %}
+第{{ cp }}/{{ pages }}页
+{% if cp<pages %}[<a href="/n/{{ novel.code }}/chapters?cp={{ cp+1 }}">下一页</a>]{% endif %}</p>
+{% endblock %}

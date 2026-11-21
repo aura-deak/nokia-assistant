@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}删除确认 - 云小说{% endblock %}
+{% block body %}
+<h2>删除确认</h2>
+<p>确定删除《{{ novel.title }}》吗？删除后分享链接同时失效。</p>
+<form method="post" action="/novel/{{ novel.id }}/delete">
+<p><input type="submit" value="确认删除"> [<a href="/novel">取消</a>]</p>
+</form>
+{% endblock %}

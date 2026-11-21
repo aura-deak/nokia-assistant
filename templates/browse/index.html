@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}网页辅助浏览 - 诺基亚助手{% endblock %}
+{% block body %}
+<h2>网页辅助浏览</h2>
+<p>服务器代为抓取，去除样式/脚本/图片/注释，输出纯文字页；超大页面自动分页。</p>
+<form method="get" action="/browse">
+<p>网址:<br><input type="text" name="url" size="28"></p>
+<p><input type="submit" value="打开网页"></p>
+</form>
+<form method="get" action="/browse/search">
+<p>搜索:<br><input type="text" name="q" size="28"></p>
+<p><input type="submit" value="必应搜索"></p>
+</form>
+<hr>
+<p>快捷入口:<br>
+[<a href="/browse?url=https%3A%2F%2Fwww.baidu.com">百度</a>]
+[<a href="/browse?url=https%3A%2F%2Fcn.bing.com">必应</a>]
+[<a href="/browse?url=https%3A%2F%2Fexample.com">示例页</a>]</p>
+{% endblock %}
