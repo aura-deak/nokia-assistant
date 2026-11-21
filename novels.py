@@ -15,7 +15,7 @@ from helpers import current_user, is_privileged, login_required, msg_page, now_s
 bp = Blueprint("novel", __name__)
 
 MAX_NOVEL_BYTES = 15 * 1024 * 1024
-PAGE_CHARS = 2400          # 阅读页每页字符数
+PAGE_CHARS = 500           # 阅读页每页字符数（硬切）
 CHAPTERS_PER_PAGE = 40     # 目录每页章节数
 QUOTA_BYTES = 2 * 1024 * 1024   # 普通用户书库总容量；特权用户无上限
 
@@ -103,30 +103,9 @@ def _get_novel(code):
 
 
 def _split_pages(text):
-    """把一段文本按段落切成若干阅读页。"""
-    if not text:
-        return [""]
-    paras = text.split("\n")
-    pages, buf, size = [], [], 0
-    for p in paras:
-        p = p.rstrip()
-        while len(p) > PAGE_CHARS:          # 超长段落硬切
-            if buf:
-                pages.append("\n".join(buf))
-                buf, size = [], 0
-            pages.append(p[:PAGE_CHARS])
-            p = p[PAGE_CHARS:]
-        if p == "" and not buf:
-            continue
-        if size + len(p) + 1 > PAGE_CHARS and buf:
-            pages.append("\n".join(buf))
-            buf, size = [], 0
-        if p != "":
-            buf.append(p)
-            size += len(p) + 1
-    if buf:
-        pages.append("\n".join(buf))
-    return pages or [""]
+    """直接按固定字数硬切分页，保证功能机上每页足够小。"""
+    text = text or ""
+    return [text[i:i + PAGE_CHARS] for i in range(0, len(text), PAGE_CHARS)] or [""]
 
 
 def _chapter_slice(text, chapters, ci):

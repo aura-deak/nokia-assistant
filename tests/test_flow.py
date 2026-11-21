@@ -62,7 +62,11 @@ html_doc = """<!DOCTYPE html><html><head><title>测试页</title>
 <script>alert(1)</script><nav><a href="/top">导航项</a></nav>
 <p>第一段 <a href="sub/page.html">相对链接</a> 与 <a href="javascript:x()">坏链接</a></p>
 <img src="big.jpg"><h2>小标题</h2><ul><li>条目一</li><li>条目二</li></ul>
-<form><input name="q"></form><table><tr><td>甲</td><td>乙</td></tr></table>
+<form action="/search"><input type="hidden" name="hl" value="zh">
+<input type="text" name="q"><select name="ct"><option value="1">网页</option></select>
+<button>搜索一下</button></form>
+<button onclick="x()">独立按钮</button>
+<table><tr><td>甲</td><td>乙</td></tr></table>
 </body></html>"""
 title, segs = _clean_and_linearize(BeautifulSoup(html_doc, "html.parser"),
                                    "http://example.com/dir/")
@@ -72,7 +76,12 @@ check("注释已去除", "这是一个注释" not in flat, flat)
 check("脚本已去除", "alert" not in flat, flat)
 check("样式已去除", "color:red" not in flat, flat)
 check("图片已去除", "big.jpg" not in flat, flat)
-check("表单已去除", "input" not in flat and "q" not in flat.replace("page", ""), flat)
+check("表单保留并走代理", 'action="/browse"' in flat and 'name="q"' in flat, flat)
+check("表单hidden并入目标URL", "hl=zh" in flat, flat)
+check("下拉框保留", "<select" in flat and "网页" in flat, flat)
+check("提交按钮保留", 'type="submit"' in flat and "搜索一下" in flat, flat)
+check("孤立按钮文字保留", "[独立按钮]" in flat, flat)
+check("表单控件不重复渲染", flat.count('name="q"') == 1, flat)
 check("导航已去除", "导航项" not in flat, flat)
 check("相对链接转绝对", ("l", "http://example.com/dir/sub/page.html", "相对链接") in segs, flat)
 check("javascript链接被丢弃", "javascript:x()" not in flat, flat)
@@ -110,9 +119,9 @@ from novels import _split_pages, PAGE_CHARS
 ntext = "\n".join("第%03d段 " % i + "正文文字" * 40 for i in range(100))
 npages = _split_pages(ntext)
 check("小说分页多于1页", len(npages) > 1, str(len(npages)))
-check("小说每页不超预算", all(len(p) <= PAGE_CHARS + 80 for p in npages),
+check("小说每页不超500字", all(len(p) <= PAGE_CHARS for p in npages),
       max(len(p) for p in npages))
-check("小说分页覆盖全部段落", all(("第%03d段" % i) in "\n".join(npages) for i in range(100)), "")
+check("小说分页拼接还原原文", "".join(npages) == ntext, "")
 
 # ---- 3. 网页代理（在线） ----
 r = s.get(BASE + "/browse", params={"url": "https://example.com"})
@@ -139,6 +148,55 @@ r = s.get(BASE + "/browse", params={"url": "http://127.0.0.1:1/x"})
 check("内网地址被拦截", "不可访问" in r.text, r.text)
 r = s.get(BASE + "/browse", params={"url": "http://no-such-host.invalid/x"})
 check("不存在域名报错", ("抓取失败" in r.text or "不可访问" in r.text or "返回错误" in r.text), r.text)
+
+# 表单代理集成测试：起一个带表单的本地站点，经 /browse 提交并看到结果
+import threading as _th
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+class _Site(BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+    def do_GET(self):
+        if self.path.startswith("/search"):
+            import urllib.parse as _up
+            q = _up.parse_qs(_up.urlparse(self.path).query).get("q", [""])[0]
+            body = ("<html><title>搜索</title><body>你的查询是：%s"
+                    "<a href='/'>回首页</a></body></html>" % q).encode()
+        else:
+            body = ("<html><title>主页</title><body><form action='/search'>"
+                    "<input type='hidden' name='hl' value='zh'>"
+                    "<input type='text' name='q'><button>搜</button></form>"
+                    "</body></html>").encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+_site_srv = HTTPServer(("127.0.0.1", 5802), _Site)
+_th.Thread(target=_site_srv.serve_forever, daemon=True).start()
+time.sleep(0.4)
+r = s.get(BASE + "/browse", params={"url": "http://127.0.0.1:5802/"})
+check("本地站点被SSRF拦截", "不可访问" in r.text, r.text[:200])
+import browse as _browse
+from urllib.parse import quote as _uq
+import app as _appmod
+_tc = _appmod.app.test_client()
+_orig_check = _browse._check_host
+_browse._check_host = lambda u: True    # 进程内放行 5802（dev 服务进程不受影响）
+try:
+    # 表单首页：搜索框、按钮保留
+    r2 = _tc.get("/browse?url=" + _uq("http://127.0.0.1:5802/", safe=""))
+    check("代理页保留搜索框", 'name="q"' in r2.text, r2.text[:400])
+    check("代理页保留提交按钮", 'type="submit"' in r2.text and "搜" in r2.text, r2.text[:400])
+    check("代理表单action走代理", 'action="/browse"' in r2.text, r2.text[:400])
+    check("hidden已并入代理目标", "hl%3Dzh" in r2.text or "hl=zh" in r2.text, r2.text[:400])
+    # 表单提交：字段并入目标 URL，代理抓到结果页
+    r2 = _tc.get("/browse?url=" + _uq("http://127.0.0.1:5802/search?q=功能机", safe=""))
+    check("表单参数并入目标URL完成代理", "你的查询是：功能机" in r2.text, r2.text[:400])
+finally:
+    _browse._check_host = _orig_check
+    _site_srv.shutdown()
 
 # ---- 4. AI 对话 ----
 KEYS_PATH = os.path.join(BASE_DIR, "data", "api_keys.json")

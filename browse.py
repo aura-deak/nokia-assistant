@@ -9,7 +9,7 @@ import re
 import socket
 import threading
 import time
-from urllib.parse import urljoin, quote, urlparse
+from urllib.parse import quote, urlencode, urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup, Comment
@@ -35,8 +35,7 @@ _CACHE_TTL = 1800
 _BLOCK_TAGS = {
     "script", "style", "noscript", "template", "iframe", "frame", "frameset",
     "object", "embed", "applet", "svg", "img", "picture", "source", "video",
-    "audio", "canvas", "map", "area", "form", "input", "button", "select",
-    "option", "textarea", "label", "fieldset", "legend", "datalist", "head",
+    "audio", "canvas", "map", "area", "datalist", "head",
     "meta", "link", "base", "dialog", "nav", "footer",
 }
 
@@ -101,6 +100,81 @@ def _fetch(url):
     return r, text, ctype
 
 
+def _esc(s):
+    return html.escape(str(s or ""), quote=True)
+
+
+def _form_target(form_tag, base_url):
+    """表单提交目标 = action 绝对地址 + hidden 字段；非 http(s) 返回 None。"""
+    action = urljoin(base_url, form_tag.get("action") or base_url)
+    if urlparse(action).scheme not in ("http", "https"):
+        return None
+    pairs = [(i.get("name"), i.get("value") or "")
+             for i in form_tag.find_all("input")
+             if (i.get("type") or "").lower() == "hidden" and i.get("name")]
+    if pairs:
+        action += ("&" if urlparse(action).query else "?") + urlencode(pairs)
+    return action
+
+
+def _render_form(form_tag, base_url):
+    """把表单渲染成走代理的小型 GET 表单（保留输入框/下拉/按钮），
+    提交时字段并入代理目标 URL。无可见输入控件返回空。"""
+    target = _form_target(form_tag, base_url)
+    if not target:
+        return ""
+    fields, nctl, submit_txt = [], 0, ""
+
+    def want_submit(txt):
+        nonlocal submit_txt
+        if not submit_txt:
+            submit_txt = (txt or "").strip()[:20] or "提交"
+
+    for ctl in form_tag.find_all(["input", "select", "textarea", "button"]):
+        if nctl >= 8:
+            break
+        typ = (ctl.get("type") or "").lower()
+        name = ctl.get("name")
+        if ctl.name == "input":
+            if typ in ("hidden", "button", "reset", "file"):
+                continue
+            if typ in ("submit", "image"):
+                want_submit(ctl.get("value") or "")
+                continue
+            if not name:
+                continue
+            if typ in ("checkbox", "radio"):
+                fields.append('<input type="%s" name="%s" value="%s">'
+                              % (typ, _esc(name), _esc(ctl.get("value") or "")))
+            else:  # 文本类输入统一为 text
+                fields.append('<input type="text" name="%s" value="%s" size="20">'
+                              % (_esc(name), _esc(ctl.get("value") or "")))
+            nctl += 1
+        elif ctl.name == "select" and name:
+            opts = []
+            for opt in ctl.find_all("option")[:20]:
+                ov = opt.get("value", opt.get_text(" ", strip=True))
+                ot = (opt.get_text(" ", strip=True) or str(ov))[:30]
+                sel = " selected" if opt.has_attr("selected") else ""
+                opts.append('<option value="%s"%s>%s</option>'
+                            % (_esc(str(ov)[:60]), sel, _esc(ot)))
+            fields.append('<select name="%s">%s</select>' % (_esc(name), "".join(opts)))
+            nctl += 1
+        elif ctl.name == "textarea" and name:
+            fields.append('<textarea name="%s" rows="2" cols="22"></textarea>'
+                          % _esc(name))
+            nctl += 1
+        elif ctl.name == "button":
+            if typ not in ("button", "reset"):
+                want_submit(ctl.get_text(" ", strip=True))
+    if nctl == 0:
+        return ""
+    fields.append('<input type="submit" value="%s">' % _esc(submit_txt))
+    return ('<form method="get" action="/browse">'
+            '<input type="hidden" name="url" value="%s">%s</form>'
+            % (_esc(target), "".join(fields)))
+
+
 def _clean_and_linearize(soup, base_url):
     """移除注释与无用标签，把 DOM 拉平成
     ('t', 文本) / ('l', 链接, 文本) / ('h', 标题) / ('n', 换行) 片段。"""
@@ -150,6 +224,25 @@ def _clean_and_linearize(soup, base_url):
                 segments.append(("n",))
             elif name == "a":
                 handle_link(child)
+            elif name == "form":
+                fh = _render_form(child, base_url)
+                if fh:
+                    segments.append(("f", fh))
+                segments.append(("n",))
+                walk(child)
+                segments.append(("n",))
+            elif name in ("input", "select", "textarea"):
+                # 表单内控件已在表单块中渲染；孤立输入框只保留其值
+                if child.find_parent("form") is None:
+                    v = child.get("value") or ""
+                    if v and (child.get("type") or "").lower() != "hidden":
+                        add_text(v)
+            elif name == "button":
+                # 表单内按钮已在表单块中；孤立按钮保留文字
+                if child.find_parent("form") is None:
+                    t = child.get_text(" ", strip=True)
+                    if t:
+                        add_text("[" + t[:30] + "]")
             elif name in ("h1", "h2", "h3", "h4", "h5", "h6"):
                 t = child.get_text(" ", strip=True)
                 if t:
@@ -188,6 +281,8 @@ def _seg_cost(seg):
         return len(seg[1])
     if seg[0] == "h":
         return len(seg[1]) + 8
+    if seg[0] == "f":
+        return len(seg[1]) + 16
     return len(seg[2]) + 32  # 链接
 
 
@@ -253,6 +348,9 @@ def _segments_to_html(segments, entry, page):
             parts.append('[<a href="%s">%s</a>]' % (html.escape(target, quote=True),
                                                     html.escape(text, quote=False)))
             last_nl = False
+        elif kind == "f":
+            parts.append(seg[1])
+            last_nl = False
     return "".join(parts)
 
 
@@ -284,6 +382,11 @@ def browse_page():
         # 重新抓取（token 失效或首次访问）
         if not _check_host(url):
             return msg_page("无法浏览", ["目标地址不可访问（仅支持公网 http/https 地址）"], back="/browse")
+        # 表单代理提交：除 url/t/page 外的 GET 参数并入目标地址
+        extra = [(k, v) for k, v in request.args.items()
+                 if k not in ("url", "t", "page") and v]
+        if extra:
+            url = url + ("&" if urlparse(url).query else "?") + urlencode(extra)
         try:
             r, text, ctype = _fetch(url)
         except requests.exceptions.Timeout:
