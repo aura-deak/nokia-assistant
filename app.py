@@ -4,25 +4,34 @@
 import os
 import secrets
 
-from flask import Flask, render_template, session
+from flask import Flask, render_template, request, session
 
 from db import init_db, get_db, close_db
-from helpers import current_user, register_filters
+from helpers import current_user, msg_page, register_filters
 import auth
 import browse
 import aichat
 import novels
+import ratelimit
 
 
 def create_app():
     app = Flask(__name__)
     base = os.path.dirname(os.path.abspath(__file__))
     key_path = os.path.join(base, "secret.key")
-    if not os.path.exists(key_path):
+    key = (os.environ.get("SECRET_KEY") or "").strip()
+    if not key and os.path.exists(key_path):
+        key = open(key_path).read().strip()
+    if len(key) < 64:                # 缺失或强度不足：重新生成 32 字节随机密钥
+        key = secrets.token_hex(32)
         with open(key_path, "w") as f:
-            f.write(secrets.token_hex(32))
+            f.write(key)
+    try:
+        os.chmod(key_path, 0o600)    # 密钥文件仅本人可读
+    except OSError:
+        pass
     app.config.update(
-        SECRET_KEY=open(key_path).read().strip(),
+        SECRET_KEY=key,
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
         PERMANENT_SESSION_LIFETIME=60 * 60 * 24 * 30,
@@ -48,6 +57,33 @@ def create_app():
     @app.context_processor
     def inject_user():
         return {"g_user": current_user()}
+
+    @app.before_request
+    def rate_limit_guard():
+        """IP + 用户名双维度限流（60 秒滑动窗口）。"""
+        if request.endpoint in (None, "static"):
+            return None
+        ip = request.remote_addr or "?"
+        if ip in ("127.0.0.1", "::1"):
+            # 经 Cloudflare 隧道访问时取真实访客地址
+            fwd = (request.headers.get("CF-Connecting-IP")
+                   or (request.headers.get("X-Forwarded-For") or "").split(",")[0])
+            fwd = (fwd or "").strip()[:64]
+            if fwd:
+                ip = fwd
+        uname = ""
+        user = current_user()
+        if user:
+            uname = user["username"]
+        elif request.method == "POST" and request.endpoint in ("auth.login_page",
+                                                               "auth.register"):
+            uname = (request.form.get("username") or "").strip()[:32]
+        ok, dim = ratelimit.check(ip, uname or None)
+        if not ok:
+            label = "IP" if dim == "ip" else "账号"
+            return msg_page("请求过于频繁",
+                            ["触发了%s限流，请稍后再试。" % label], back="/"), 429
+        return None
 
     @app.after_request
     def no_cache(resp):

@@ -1,21 +1,65 @@
 """账号：注册、登录、登出。全站共用一个登录态。"""
 
+import io
+import json
 import re
-from flask import Blueprint, request, redirect, url_for, render_template
+from flask import (Blueprint, make_response, request, redirect, session,
+                   url_for, render_template)
 from werkzeug.security import generate_password_hash, check_password_hash
 
+from easy_captcha import SpecCaptcha
+
 from db import get_db
-from helpers import login_user, logout_user, now_str
+from helpers import CONFIG_PATH, login_user, logout_user, now_str
 
 bp = Blueprint("auth", __name__)
 
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_\u4e00-\u9fa5]{2,16}$")
+CAPTCHA_WIDTH, CAPTCHA_HEIGHT, CAPTCHA_LEN = 120, 40, 4
+
+
+def _captcha_fixed():
+    """config.json 的 captcha_fixed：测试用固定验证码，正式部署留空。"""
+    try:
+        with open(CONFIG_PATH, "rb") as f:
+            cfg = json.loads(f.read().decode("utf-8"))
+        v = cfg.get("captcha_fixed") if isinstance(cfg, dict) else None
+        if isinstance(v, str) and 2 <= len(v) <= 8:
+            return v
+    except (OSError, ValueError):
+        pass
+    return ""
+
+
+@bp.route("/captcha.png")
+def captcha_png():
+    cap = SpecCaptcha(width=CAPTCHA_WIDTH, height=CAPTCHA_HEIGHT, length=CAPTCHA_LEN)
+    fixed = _captcha_fixed()
+    if fixed:
+        cap._chars = fixed
+    code = cap.text()
+    session["cap"] = code
+    buf = io.BytesIO()
+    cap.out(buf)
+    resp = make_response(buf.getvalue())
+    resp.headers["Content-Type"] = "image/png"
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+def _check_captcha():
+    """校验并一次性作废验证码。"""
+    got = (request.form.get("captcha") or "").strip()
+    want = session.pop("cap", None)
+    return bool(want) and bool(got) and got.lower() == want.lower()
 
 
 @bp.route("/register", methods=["GET", "POST"])
 def register():
     if request.method == "GET":
         return render_template("register.html")
+    if not _check_captcha():
+        return render_template("register.html", error="验证码错误，请重新输入")
     username = (request.form.get("username") or "").strip()
     password = request.form.get("password") or ""
     if not USERNAME_RE.match(username):
@@ -39,6 +83,8 @@ def login_page():
         nxt = "/"
     if request.method == "GET":
         return render_template("login.html", next=nxt)
+    if not _check_captcha():
+        return render_template("login.html", error="验证码错误，请重新输入", next=nxt)
     username = (request.form.get("username") or "").strip()
     password = request.form.get("password") or ""
     row = get_db().execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()

@@ -31,8 +31,24 @@ def size_kb(text):
 SUFFIX = str(random.randint(1000, 9999))
 s = requests.Session()
 
+# 测试配置：固定验证码、放宽限流（避免测试流量触发），特权名单空
+CFG_PATH = os.path.join(BASE_DIR, "config.json")
+_orig_cfg = open(CFG_PATH, encoding="utf-8").read() if os.path.exists(CFG_PATH) else ""
+CAPTCHA_FIXED = "1234"
+
+def write_cfg(**kw):
+    cfg = {"privileged_users": [], "captcha_fixed": CAPTCHA_FIXED,
+           "rate_limit": {"ip_per_minute": 5000, "user_per_minute": 5000}}
+    cfg.update(kw)
+    with open(CFG_PATH, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False)
+
+write_cfg()
+
 # ---- 1. 注册与登录 ----
-r = s.post(BASE + "/register", data={"username": "测试用户" + SUFFIX, "password": "pass1234"},
+s.get(BASE + "/captcha.png")
+r = s.post(BASE + "/register", data={"username": "测试用户" + SUFFIX, "password": "pass1234",
+                                     "captcha": CAPTCHA_FIXED},
            allow_redirects=False)
 check("注册重定向", r.status_code == 302, r.text)
 r = s.get(BASE + "/")
@@ -42,19 +58,61 @@ r2 = requests.get(BASE + "/logout", cookies=dict(s.cookies), allow_redirects=Fal
 r3 = requests.get(BASE + "/")
 check("登出后未登录", "测试用户" not in r3.text)
 UNAME = "测试用户" + SUFFIX
-r = requests.post(BASE + "/login",
-                  data={"username": UNAME, "password": "pass1234", "next": "/"},
-                  allow_redirects=False)
+lt = requests.Session()
+lt.get(BASE + "/captcha.png")
+r = lt.post(BASE + "/login",
+            data={"username": UNAME, "password": "pass1234", "next": "/",
+                  "captcha": CAPTCHA_FIXED},
+            allow_redirects=False)
 check("登录重定向", r.status_code == 302)
 
 # 错误密码
-rbad = requests.post(BASE + "/login", data={"username": UNAME, "password": "wrong"})
+lt.get(BASE + "/captcha.png")
+rbad = lt.post(BASE + "/login", data={"username": UNAME, "password": "wrong",
+                                      "captcha": CAPTCHA_FIXED})
 check("错误密码被拒绝", "用户名或密码错误" in rbad.text)
+
+# ---- 1b. 验证码 / 安全配置 ----
+r = requests.get(BASE + "/captcha.png")
+check("验证码为PNG图片", r.status_code == 200
+      and r.headers.get("Content-Type") == "image/png"
+      and r.content[:8] == b"\x89PNG\r\n\x1a\n", r.headers.get("Content-Type"))
+r = requests.post(BASE + "/register", data={"username": "nocap" + SUFFIX, "password": "pass1234"},
+                  allow_redirects=False)
+check("注册缺验证码被拒绝", r.status_code == 200 and "验证码" in r.text, r.text[:200])
+r = requests.post(BASE + "/login", data={"username": UNAME, "password": "pass1234",
+                                         "captcha": "zzzz"})
+check("错误验证码被拒绝", "验证码" in r.text, r.text[:200])
+ck = requests.Session()
+ck.get(BASE + "/captcha.png")
+r = ck.post(BASE + "/register", data={"username": "capuser" + SUFFIX, "password": "pass1234",
+                                      "captcha": CAPTCHA_FIXED}, allow_redirects=False)
+check("正确验证码注册成功", r.status_code == 302, r.text[:200])
+r = ck.post(BASE + "/register", data={"username": "capuser2" + SUFFIX, "password": "pass1234",
+                                      "captcha": CAPTCHA_FIXED}, allow_redirects=False)
+check("验证码一次性", r.status_code == 200 and "验证码" in r.text, r.text[:200])
+lk = requests.Session()
+lk.get(BASE + "/captcha.png")
+r = lk.post(BASE + "/login", data={"username": UNAME, "password": "pass1234",
+                                   "captcha": CAPTCHA_FIXED}, allow_redirects=False)
+check("正确验证码登录成功", r.status_code == 302, str(r.status_code))
+sc = r.headers.get("Set-Cookie", "")
+check("会话Cookie有效期30天", "Expires=" in sc, sc[:120])
+keyfile = os.path.join(BASE_DIR, "secret.key")
+kval = open(keyfile, encoding="utf-8").read().strip()
+check("SECRET_KEY为32字节随机(64位hex)", bool(re.fullmatch(r"[0-9a-f]{64}", kval)),
+      kval[:8] + "...")
+check("secret.key权限600", (os.stat(keyfile).st_mode & 0o777) == 0o600,
+      oct(os.stat(keyfile).st_mode & 0o777))
 
 # ---- 2. 网页代理（线性化单元测试） ----
 sys.path.insert(0, BASE_DIR)
 from bs4 import BeautifulSoup
 from browse import _clean_and_linearize, _normalize_url, _check_host
+
+r = requests.get(BASE + "/browse?url=https://example.com", allow_redirects=False)
+check("未登录浏览跳转登录", r.status_code == 302 and "/login" in r.headers.get("Location", ""),
+      str(r.status_code))
 
 html_doc = """<!DOCTYPE html><html><head><title>测试页</title>
 <link rel="stylesheet" href="x.css"><style>body{color:red}</style></head>
@@ -183,8 +241,13 @@ from urllib.parse import quote as _uq
 import app as _appmod
 _tc = _appmod.app.test_client()
 _orig_check = _browse._check_host
+_orig_get = _browse._http_get
 _browse._check_host = lambda u: True    # 进程内放行 5802（dev 服务进程不受影响）
+_browse._http_get = requests.get        # 绕过 ssrfguard 直连本地 mock
 try:
+    _tc.get("/captcha.png")
+    _tc.post("/login", data={"username": UNAME, "password": "pass1234",
+                             "captcha": CAPTCHA_FIXED})
     # 表单首页：搜索框、按钮保留
     r2 = _tc.get("/browse?url=" + _uq("http://127.0.0.1:5802/", safe=""))
     check("代理页保留搜索框", 'name="q"' in r2.text, r2.text[:400])
@@ -196,6 +259,7 @@ try:
     check("表单参数并入目标URL完成代理", "你的查询是：功能机" in r2.text, r2.text[:400])
 finally:
     _browse._check_host = _orig_check
+    _browse._http_get = _orig_get
     _site_srv.shutdown()
 
 # ---- 4. AI 对话 ----
@@ -276,7 +340,9 @@ try:
 
     # 非特权用户请求 magpie 模型 → 静默回退免费模型
     s2 = requests.Session()
-    s2.post(BASE + "/register", data={"username": "用户二" + SUFFIX, "password": "pass1234"})
+    s2.get(BASE + "/captcha.png")
+    s2.post(BASE + "/register", data={"username": "用户二" + SUFFIX, "password": "pass1234",
+                                      "captcha": CAPTCHA_FIXED})
     r = s2.post(BASE + "/ai/new", data={"content": "普通用户消息", "model": "magpie:mock-b"},
                 allow_redirects=False)
     time.sleep(3)
@@ -285,16 +351,14 @@ try:
           r.text[:400])
 
     # 特权用户（config.json）可用 magpie
-    with open(CFG_PATH, "w", encoding="utf-8") as f:
-        json.dump({"privileged_users": ["用户二" + SUFFIX]}, f, ensure_ascii=False)
+    write_cfg(privileged_users=["用户二" + SUFFIX])
     check("特权用户页可见本地模型", "本地·mag-x" in s2.get(BASE + "/ai/").text, "")
     r = s2.post(BASE + "/ai/new", data={"content": "特权消息", "model": "magpie:mock-b"},
                 allow_redirects=False)
     time.sleep(3)
     r = s2.get(BASE + r.headers["Location"])
     check("特权用户magpie生成成功", "模型=mock-b" in r.text, r.text[:400])
-    with open(CFG_PATH, "w", encoding="utf-8") as f:
-        json.dump({"privileged_users": []}, f)
+    write_cfg()
     check("取消特权后看不到本地模型", "本地·" not in s2.get(BASE + "/ai/").text, "")
 
     # 内置模型密钥全部失效时给出明确错误
@@ -377,7 +441,9 @@ orig_cfg = open(CONFIG_PATH, encoding="utf-8").read()
 try:
     qname = "配额用户" + SUFFIX
     sq = requests.Session()
-    sq.post(BASE + "/register", data={"username": qname, "password": "pass1234"})
+    sq.get(BASE + "/captcha.png")
+    sq.post(BASE + "/register", data={"username": qname, "password": "pass1234",
+                                      "captcha": CAPTCHA_FIXED})
     r = sq.get(BASE + "/novel/upload")
     check("上传页显示配额", "已用 0KB / 2048KB" in r.text, r.text)
 
@@ -398,8 +464,7 @@ try:
     check("书架显示已用容量", "已用 1500KB / 2048KB" in r.text, r.text)
 
     # 写入 config.json 成为特权用户（不重启服务，应即时生效）
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump({"privileged_users": [qname]}, f, ensure_ascii=False)
+    write_cfg(privileged_users=[qname])
     r = sq.post(BASE + "/novel/upload",
                 files={"novel_file": ("big2.txt", big2, "text/plain")},
                 data={"title": "大书二"}, allow_redirects=False)
@@ -426,6 +491,29 @@ for path in ["/", "/browse", "/ai/", "/ai/settings", "/novel"]:
     check("页面 %s 无CSS/JS" % path,
           "<script" not in r.text and "<style" not in r.text and "style=" not in r.text, path)
     check("页面 %s 体积<%sKB" % (path, 8), size_kb(r.text) < 8, size_kb(r.text))
+
+# ---- 7. IP 与用户名双维度限流（最后执行，避免影响其它测试）----
+write_cfg(rate_limit={"ip_per_minute": 1000000, "user_per_minute": 4})
+rl = requests.Session()
+rl.get(BASE + "/captcha.png")
+rl.post(BASE + "/register", data={"username": "限流用户" + SUFFIX, "password": "pass1234",
+                                  "captcha": CAPTCHA_FIXED}, allow_redirects=False)
+hit = None
+for _i in range(8):
+    r = rl.get(BASE + "/ai/")
+    if r.status_code == 429:
+        hit = r
+        break
+check("用户名维度限流生效", hit is not None and "账号限流" in hit.text,
+      hit.text[:200] if hit else "未触发")
+write_cfg(rate_limit={"ip_per_minute": 1, "user_per_minute": 1000000})
+r = requests.get(BASE + "/")
+check("IP维度限流生效", r.status_code == 429 and "IP限流" in r.text, r.text[:200])
+
+# 恢复真实配置
+with open(CFG_PATH, "w", encoding="utf-8") as f:
+    f.write(_orig_cfg)
+check("config.json已还原为原样", open(CFG_PATH, encoding="utf-8").read() == _orig_cfg, "")
 
 print("\n== 通过 %d / %d ==" % (ok, ok + fail))
 sys.exit(1 if fail else 0)

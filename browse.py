@@ -12,10 +12,12 @@ import time
 from urllib.parse import quote, urlencode, urljoin, urlparse
 
 import requests
+import ssrfguard
 from bs4 import BeautifulSoup, Comment
 from flask import Blueprint, render_template, request
+from ssrfguard import Policy
 
-from helpers import msg_page
+from helpers import login_required, msg_page
 
 bp = Blueprint("browse", __name__)
 
@@ -41,46 +43,44 @@ _BLOCK_TAGS = {
 
 # 仅拦截明确的内网/本机地址段；198.18.0.0/15 为常见本地代理
 # fake-ip 模式（如 Clash）使用的虚拟网段，予以放行。
-_BLOCKED_NETS = [ipaddress.ip_network(n) for n in (
-    "0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8",
-    "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16",
-    "::/128", "::1/128", "fc00::/7", "fe80::/10",
-)]
+# 198.18.0.0/15 为 Clash 等本地代理 fake-ip 网段，显式放行
 _FAKE_IP_NET = ipaddress.ip_network("198.18.0.0/15")
+_POLICY = Policy(allowed_networks=(_FAKE_IP_NET,),
+                 allowed_ports=frozenset({80, 443, 8080}),
+                 allow_proxy=True)   # 本机经 Clash 代理时由代理层解析
+_GUARD_SESSION = None
 _INLINE_KEEP = {"span", "b", "i", "em", "strong", "u", "s", "code", "small",
                 "font", "big", "sub", "sup", "abbr", "cite", "q", "time",
                 "mark", "var", "kbd", "tt"}
 
 
 def _check_host(url):
-    """基本 SSRF 防护：仅 http/https，拒绝内网地址。"""
-    p = urlparse(url)
-    if p.scheme not in ("http", "https") or not p.netloc:
-        return False
-    host = p.hostname or ""
+    """ssrfguard 策略检查：仅 http/https，拒绝内网地址与非常用端口。"""
+    host = (urlparse(url).hostname or "").lower()
     if host in ("localhost", "localhost.localdomain") or host.endswith(".local"):
         return False
     try:
-        infos = socket.getaddrinfo(host, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
-    except OSError:
-        return True  # 解析失败交给 requests 报错
-    for info in infos:
-        try:
-            addr = ipaddress.ip_address(info[4][0])
-        except ValueError:
-            return False
-        if addr in _FAKE_IP_NET:
-            continue
-        if any(addr in net for net in _BLOCKED_NETS):
-            return False
-    return True
+        _POLICY.check_url(url)
+        return True
+    except ssrfguard.SSRFGuardError:
+        return False
+
+
+def _http_get(url, **kw):
+    """走 ssrfguard 的 Session：先解析并校验地址，再直连已验证的 IP，
+    避免 DNS 重绑定攻击。"""
+    global _GUARD_SESSION
+    if _GUARD_SESSION is None:
+        from ssrfguard.requests import Session as _SafeSession
+        _GUARD_SESSION = _SafeSession(policy=_POLICY)
+    return _GUARD_SESSION.get(url, **kw)
 
 
 def _fetch(url):
     """抓取并限长。返回 (resp, error)。"""
-    r = requests.get(url, timeout=(10, 30), stream=True,
-                     headers={"User-Agent": UA, "Accept-Language": "zh-CN,zh;q=0.9"},
-                     allow_redirects=True)
+    r = _http_get(url, timeout=(10, 30), stream=True,
+                  headers={"User-Agent": UA, "Accept-Language": "zh-CN,zh;q=0.9"},
+                  allow_redirects=True)
     chunks, size = [], 0
     for chunk in r.iter_content(chunk_size=65536):
         chunks.append(chunk)
@@ -364,6 +364,7 @@ def _normalize_url(u):
 
 
 @bp.route("/browse")
+@login_required
 def browse_page():
     url = _normalize_url(request.args.get("url"))
     if not url:
@@ -434,6 +435,7 @@ def browse_page():
 
 
 @bp.route("/browse/search")
+@login_required
 def browse_search():
     q = (request.args.get("q") or "").strip()
     if not q:

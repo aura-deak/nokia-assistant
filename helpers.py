@@ -38,6 +38,7 @@ def guest_key():
     if not k:
         k = secrets.token_hex(16)
         session["gkey"] = k
+        session.permanent = True
     return k
 
 
