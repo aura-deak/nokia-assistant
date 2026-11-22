@@ -4,7 +4,7 @@
 import os
 import secrets
 
-from flask import Flask, render_template, request, session
+from flask import Flask, render_template, request, session, redirect, url_for
 
 from db import init_db, get_db, close_db
 from helpers import current_user, msg_page, register_filters
@@ -52,6 +52,8 @@ def create_app():
     @app.route("/")
     def index():
         user = current_user()
+        if user is None:  # 首页不放登录表单，未登录直接去登录页
+            return redirect(url_for("auth.login_page"))
         return render_template("index.html", user=user)
 
     @app.context_processor

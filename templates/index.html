@@ -1,17 +1,7 @@
 {% extends "base.html" %}
 {% block body %}
 <h1>诺基亚助手</h1>
-{% if user %}
 <p>欢迎回来，{{ user.username }}。账号状态全站同步。</p>
-{% else %}
-<p><b>登录（一次登录，三个服务通用）:</b></p>
-<form method="post" action="/login">
-<p>用户名: <input type="text" name="username" size="20"></p>
-<p>密　码: <input type="password" name="password" size="20"></p>
-<p><input type="submit" value="登录"> [<a href="/register">注册新账号</a>]</p>
-</form>
-<hr>
-{% endif %}
 <p><b>[1] <a href="/browse" accesskey="1">网页辅助浏览</a></b><br>
 由服务器代下载网页，去除样式/脚本/图片/注释并自动分页，小内存手机也能流畅打开。</p>
 <p><b>[2] <a href="/ai/" accesskey="2">AI 对话</a></b><br>
