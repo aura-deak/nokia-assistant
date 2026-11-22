@@ -100,3 +100,9 @@ helpers.py    登录态、提示页等公共函数
 templates/    纯 HTML 模板
 tests/        端到端测试与 mock 服务
 ```
+
+## 许可
+
+Copyright (C) 2026 陈子涵
+
+本项目以 GNU General Public License v3.0 发布，全文见 LICENSE。
