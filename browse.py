@@ -77,8 +77,17 @@ def _is_self(url):
         cur = (request.host or "").lower()
     except RuntimeError:
         cur = ""
-    # 1) 目标 netloc 与当前请求 Host 完全相等（最可靠，不依赖端口推断）
-    if cur and p.netloc.lower() == cur:
+    # 1) 目标 netloc 与当前请求 Host 归一化后相等（最可靠，不依赖端口推断）
+    def _norm_netloc(netloc, scheme):
+        n = (netloc or "").lower()
+        host, _, port = n.rpartition(":")
+        if port and port.isdigit():
+            port = int(port)
+            if scheme and port == (443 if scheme == "https" else 80):
+                return host  # 默认端口归一化掉
+            return n
+        return n
+    if cur and _norm_netloc(p.netloc, p.scheme) == _norm_netloc(cur, p.scheme):
         return True
     # 2) 仅当能拿到当前端口时，才判断"本地地址 + 同端口"
     cur_port = None
