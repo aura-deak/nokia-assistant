@@ -512,8 +512,9 @@ def browse_search():
     q = (request.args.get("q") or "").strip()
     if not q:
         return render_template("browse/index.html")
-    # 必应 robots.txt 禁止 /search，改用允许全站抓取的 DuckDuckGo
-    url = "https://html.duckduckgo.com/html/?q=" + quote(q, safe="")
+    # 主流引擎的 robots.txt 都禁搜索路径；wiby.me 对通用 UA 开放 /?q= 搜索，
+    # 国内可直连，且本身是轻量老网页风格，适合功能机浏览。
+    url = "https://wiby.me/?q=" + quote(q, safe="")
     return _redirect_proxy(url)
 
 
