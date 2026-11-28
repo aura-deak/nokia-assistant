@@ -198,8 +198,9 @@ check("第二章600字分2页", len(c2) == 600
       str([len(p) for p in _split_pages(c2)]))
 
 # ---- 3. 网页代理（在线） ----
-r = s.get(BASE + "/browse", params={"url": "https://example.com"})
-check("代理example.com成功", "Example Domain" in r.text and "example" in r.text.lower(), r.text)
+# example.com 没有 robots.txt，按新规则会被拒；改用 iana.org（有 robots 且全允许）
+r = s.get(BASE + "/browse", params={"url": "https://www.iana.org/domains/example"})
+check("代理iana.org成功", "Example" in r.text, r.text[:300])
 check("代理页面无脚本残留", "<script" not in r.text, r.text[:2000])
 check("代理页面无样式残留", "style=" not in r.text and "<style" not in r.text, r.text)
 check("代理页面无img", "<img" not in r.text, r.text)
@@ -207,21 +208,22 @@ check("代理页面小(%sKB)" % size_kb(r.text), size_kb(r.text) < 10, "")
 check("响应禁缓存", r.headers.get("Cache-Control") == "no-store, max-age=0",
       str(r.headers.get("Cache-Control")))
 links = re.findall(r'href="(/browse\?url=[^"]+)"', r.text)
-check("包含原文链接或代理链接", len(links) >= 1 or "原文" in r.text, r.text)
+check("包含原文链接或代理链接", len(links) >= 1 or "原文" in r.text, r.text[:300])
 
-# 有外链的页面（example.com 底部有 iana.org 链接）
+# 有外链的页面（iana.org 底部有大量外链）
 if "iana.org" in r.text:
     links = re.findall(r'href="(/browse\?url=[^"]+)"', r.text)
     check("外链已重写为代理链接", any("iana.org" in u for u in links), r.text)
-    check("链接文字保留", "More information" in r.text, r.text)
+    check("链接文字保留", ("Domains" in r.text or "Protocols" in r.text), r.text[:300])
 else:
-    print("SKIP example.com 外链测试（网络不可达或页面变更），已由单元测试覆盖")
+    print("SKIP iana.org 外链测试（网络不可达或页面变更），已由单元测试覆盖")
 
 # 无效地址
 r = s.get(BASE + "/browse", params={"url": "http://127.0.0.1:1/x"})
 check("内网地址被拦截", "不可访问" in r.text, r.text)
 r = s.get(BASE + "/browse", params={"url": "http://no-such-host.invalid/x"})
-check("不存在域名报错", ("抓取失败" in r.text or "不可访问" in r.text or "返回错误" in r.text), r.text)
+check("不存在域名报错", ("抓取失败" in r.text or "不可访问" in r.text
+                        or "返回错误" in r.text or "robots.txt" in r.text), r.text)
 
 # 套娃自检：不能通过代理浏览本站自身
 r = s.get(BASE + "/browse", params={"url": BASE + "/"})

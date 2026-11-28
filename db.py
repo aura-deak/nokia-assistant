@@ -61,6 +61,13 @@ CREATE TABLE IF NOT EXISTS reading_progress (
     updated_at TEXT NOT NULL,
     PRIMARY KEY(user_id, novel_id)
 );
+CREATE TABLE IF NOT EXISTS quick_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    url TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 """
 
 
@@ -92,6 +99,13 @@ def init_db():
 
 def _migrate(con):
     """为旧库补充新增列（游客会话、按消息记录模型）。"""
+    con.execute("""CREATE TABLE IF NOT EXISTS quick_links (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        url TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    )""")
     cols = [r[1] for r in con.execute("PRAGMA table_info(conversations)")]
     if "guest_key" not in cols:
         con.execute("ALTER TABLE conversations ADD COLUMN guest_key TEXT DEFAULT ''")

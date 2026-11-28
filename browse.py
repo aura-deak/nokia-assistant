@@ -18,7 +18,8 @@ from bs4 import BeautifulSoup, Comment
 from flask import Blueprint, render_template, request
 from ssrfguard import Policy
 
-from helpers import login_required, msg_page
+from db import get_db
+from helpers import current_user, login_required, msg_page, now_str
 
 bp = Blueprint("browse", __name__)
 
@@ -59,6 +60,35 @@ _ROBOTS_CACHE = {}
 _ROBOTS_LOCK = threading.Lock()
 _ROBOTS_TTL = 3600
 _ROBOTS_UA = "NokiaAssistantProxy"
+
+# 内置快捷入口（robots 已逐个核对，均为允许抓取的国内资讯站）
+_DEFAULT_LINKS = [
+    ("新华网", "https://www.news.cn"),
+    ("中新网", "https://www.chinanews.com.cn"),
+    ("环球网", "https://www.huanqiu.com"),
+    ("观察者网", "https://www.guancha.cn"),
+    ("人民网", "http://www.people.com.cn"),
+    ("网易新闻", "https://www.163.com"),
+    ("澎湃", "https://www.thepaper.cn"),
+    ("虎嗅", "https://www.huxiu.com"),
+    ("爱范儿", "https://www.ifanr.com"),
+    ("少数派", "https://www.sspai.com"),
+]
+
+
+def _user_links():
+    uid = current_user()["id"]
+    rows = get_db().execute(
+        "SELECT id, name, url FROM quick_links WHERE user_id = ? ORDER BY id",
+        (uid,)).fetchall()
+    return rows
+
+
+def _all_links():
+    """内置 + 用户自定义，模板里统一渲染。"""
+    return ([dict(name=n, url=u, custom=False, lid=None) for n, u in _DEFAULT_LINKS]
+            + [dict(name=r["name"], url=r["url"], custom=True, lid=r["id"])
+               for r in _user_links()])
 
 
 def _origin(url):
@@ -119,7 +149,7 @@ def _is_self(url):
 
 
 def _fetch_robots(origin):
-    """抓取并解析 robots.txt，失败/超时时返回 None（按宽松处理）。"""
+    """抓取并解析 robots.txt，失败/超时时返回 None（按拒绝处理）。"""
     try:
         rp = RobotFileParser()
         # 走普通请求，ssrfguard 已在 _check_host 验过主机
@@ -137,7 +167,7 @@ def _fetch_robots(origin):
 
 
 def _allowed_by_robots(url):
-    """检查目标 URL 是否被 robots.txt 允许；拿不到 robots.txt 视为允许。"""
+    """检查目标 URL 是否被 robots.txt 允许；拿不到 robots.txt 视为不允许。"""
     o = _origin(url)
     now = time.time()
     with _ROBOTS_LOCK:
@@ -147,7 +177,7 @@ def _allowed_by_robots(url):
         else:
             rp = None
     if rp is None:
-        rp = _fetch_robots(o) or True  # None 表示宽松放行
+        rp = _fetch_robots(o)  # None = 无 robots.txt，按拒绝处理
         with _ROBOTS_LOCK:
             _ROBOTS_CACHE[o] = {"rp": rp, "ts": now}
             if len(_ROBOTS_CACHE) > 64:
@@ -155,6 +185,9 @@ def _allowed_by_robots(url):
                 _ROBOTS_CACHE.pop(oldest, None)
     if rp is True:
         return True, None
+    if rp is None:
+        return False, ("目标网站没有 robots.txt，默认不允许抓取。"
+                       "（robots.txt 是网站声明是否欢迎程序访问的方式）")
     if not rp.can_fetch(_ROBOTS_UA, url):
         return False, "目标网站的 robots.txt 禁止抓取该路径。"
     return True, None
@@ -493,7 +526,7 @@ def _normalize_url(u):
 def browse_page():
     url = _normalize_url(request.args.get("url"))
     if not url:
-        return render_template("browse/index.html")
+        return render_template("browse/index.html", links=_all_links())
     page = max(1, int(request.args.get("page", 1) or 1))
     token = request.args.get("t", "")
 
@@ -573,11 +606,42 @@ def browse_page():
 def browse_search():
     q = (request.args.get("q") or "").strip()
     if not q:
-        return render_template("browse/index.html")
+        return render_template("browse/index.html", links=_all_links())
     # 主流引擎的 robots.txt 都禁搜索路径；wiby.me 对通用 UA 开放 /?q= 搜索，
     # 国内可直连，且本身是轻量老网页风格，适合功能机浏览。
     url = "https://wiby.me/?q=" + quote(q, safe="")
     return _redirect_proxy(url)
+
+
+@bp.route("/browse/links/add", methods=["POST"])
+@login_required
+def links_add():
+    name = (request.form.get("name") or "").strip()
+    url = _normalize_url(request.form.get("url"))
+    if not name or not url:
+        return msg_page("添加失败", ["名称和网址都不能为空。"], back="/browse")
+    if len(name) > 20:
+        return msg_page("添加失败", ["名称不能超过 20 个字。"], back="/browse")
+    if urlparse(url).scheme not in ("http", "https"):
+        return msg_page("添加失败", ["网址需以 http:// 或 https:// 开头。"], back="/browse")
+    uid = current_user()["id"]
+    get_db().execute(
+        "INSERT INTO quick_links (user_id, name, url, created_at) VALUES (?,?,?,?)",
+        (uid, name, url, now_str()))
+    get_db().commit()
+    from flask import redirect
+    return redirect("/browse")
+
+
+@bp.route("/browse/links/<int:lid>/delete", methods=["POST"])
+@login_required
+def links_delete(lid):
+    uid = current_user()["id"]
+    get_db().execute(
+        "DELETE FROM quick_links WHERE id = ? AND user_id = ?", (lid, uid))
+    get_db().commit()
+    from flask import redirect
+    return redirect("/browse")
 
 
 def _redirect_proxy(url):

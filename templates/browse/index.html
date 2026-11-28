@@ -14,7 +14,13 @@
 </form>
 <hr>
 <p>快捷入口:<br>
-[<a href="/browse?url=https%3A%2F%2Fwww.baidu.com">百度</a>]
-[<a href="/browse?url=https%3A%2F%2Fcn.bing.com">必应</a>]
-[<a href="/browse?url=https%3A%2F%2Fexample.com">示例页</a>]</p>
+{% for l in links %}[<a href="/browse?url={{ l.url|urlencode }}">{{ l.name }}</a>]
+{% if l.custom %}<form method="post" action="/browse/links/{{ l.lid }}/delete"><input type="submit" value="删"></form>{% endif %}
+{% endfor %}</p>
+<p>添加快捷入口:<br>
+<form method="post" action="/browse/links/add">
+名称:<input type="text" name="name" size="10"><br>
+网址:<input type="text" name="url" size="22"><br>
+<input type="submit" value="添加"></p>
+</form>
 {% endblock %}
