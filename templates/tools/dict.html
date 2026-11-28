@@ -2,7 +2,7 @@
 {% block title %}词典 - 诺基亚助手{% endblock %}
 {% block body %}
 <h2>词典</h2>
-<p>免费公开接口，英英词典，含音标、词性、释义。</p>
+<p>免费公开接口，英汉/汉英双向词典，含音标、词性、释义。</p>
 <form method="get" action="/dict">
 <p>单词:<br><input type="text" name="q" size="28" value="{{ word }}"></p>
 <p><input type="submit" value="查询"></p>
@@ -14,8 +14,18 @@
 <p>没找到这个单词，检查拼写后重试。</p>
 {% else %}
 {% for s in result.senses %}
-<p>{% if s.pos %}<i>{{ s.pos }}</i><br>{% endif %}{{ s.def }}{% if s.example %}<br>例: {{ s.example }}{% endif %}</p>
+<p>{{ s }}</p>
 {% endfor %}
 {% endif %}
+{% endif %}
+<hr>
+<h2>翻译</h2>
+<p>含中文译英文，否则译中文。免费接口，句子也能翻。</p>
+<form method="get" action="/dict">
+<p>文本:<br><textarea name="t" rows="3" cols="28">{{ trans.in if trans else "" }}</textarea></p>
+<p><input type="submit" value="翻译"></p>
+</form>
+{% if trans and trans.text %}
+<p><b>翻译结果:</b><br>{{ trans.text }}</p>
 {% endif %}
 {% endblock %}
