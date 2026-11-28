@@ -223,6 +223,14 @@ check("内网地址被拦截", "不可访问" in r.text, r.text)
 r = s.get(BASE + "/browse", params={"url": "http://no-such-host.invalid/x"})
 check("不存在域名报错", ("抓取失败" in r.text or "不可访问" in r.text or "返回错误" in r.text), r.text)
 
+# 套娃自检：不能通过代理浏览本站自身
+r = s.get(BASE + "/browse", params={"url": BASE + "/"})
+check("禁止代理浏览本站", "不能通过代理浏览本站自身" in r.text, r.text[:200])
+r = s.get(BASE + "/browse", params={"url": "http://localhost:8000/"})
+check("禁止代理浏览本站(localhost)", "不能通过代理浏览本站自身" in r.text, r.text[:200])
+r = s.get(BASE + "/browse", params={"url": "http://127.0.0.1:8000/"})
+check("禁止代理浏览本站(127.0.0.1)", "不能通过代理浏览本站自身" in r.text, r.text[:200])
+
 # 表单代理集成测试：起一个带表单的本地站点，经 /browse 提交并看到结果
 import threading as _th
 from http.server import BaseHTTPRequestHandler, HTTPServer

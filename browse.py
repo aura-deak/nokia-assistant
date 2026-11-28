@@ -66,6 +66,49 @@ def _origin(url):
     return "%s://%s" % (p.scheme, p.netloc)
 
 
+def _is_self(url):
+    """判断目标是否指向本站自身，避免代理套娃。"""
+    p = urlparse(url)
+    host = (p.hostname or "").lower()
+    if not host:
+        return True
+    cur = ""
+    try:
+        cur = (request.host or "").lower()
+    except RuntimeError:
+        cur = ""
+    # 1) 目标 netloc 与当前请求 Host 完全相等（最可靠，不依赖端口推断）
+    if cur and p.netloc.lower() == cur:
+        return True
+    # 2) 仅当能拿到当前端口时，才判断"本地地址 + 同端口"
+    cur_port = None
+    if cur and ":" in cur:
+        try:
+            cur_port = int(cur.rsplit(":", 1)[1])
+        except ValueError:
+            cur_port = None
+    if cur_port is None:
+        return False
+    port = p.port or (443 if p.scheme == "https" else 80)
+    if port != cur_port:
+        return False
+    locals_hosts = {"localhost", "localhost.localdomain", "127.0.0.1", "::1"}
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None):
+            locals_hosts.add(info[4][0].lower())
+    except Exception:
+        pass
+    if host in locals_hosts:
+        return True
+    try:
+        for info in socket.getaddrinfo(host, None):
+            if info[4][0].lower() in locals_hosts:
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def _fetch_robots(origin):
     """抓取并解析 robots.txt，失败/超时时返回 None（按宽松处理）。"""
     try:
@@ -448,6 +491,10 @@ def browse_page():
                 entry = None
     if entry is None:
         # 重新抓取（token 失效或首次访问）
+        if _is_self(url):
+            return msg_page("无法浏览",
+                            ["不能通过代理浏览本站自身，页面会无限嵌套。",
+                             '<a href="/browse">返回</a>'], back="/browse")
         if not _check_host(url):
             return msg_page("无法浏览", ["目标地址不可访问（仅支持公网 http/https 地址）"], back="/browse")
         ok, why = _allowed_by_robots(url)
