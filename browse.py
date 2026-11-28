@@ -179,6 +179,12 @@ def _http_get(url, **kw):
     if _GUARD_SESSION is None:
         from ssrfguard.requests import Session as _SafeSession
         _GUARD_SESSION = _SafeSession(policy=_POLICY)
+        # 代理不留 cookie：目标站下发的 Set-Cookie 不保存、不回传，
+        # 用户间也不互相串会话
+        class _NoCookieJar(requests.cookies.RequestsCookieJar):
+            def set_cookie(self, cookie, *args, **kwargs):
+                pass  # 丢弃一切 Set-Cookie
+        _GUARD_SESSION.cookies = _NoCookieJar()
     return _GUARD_SESSION.get(url, **kw)
 
 
@@ -502,14 +508,14 @@ def browse_page():
         # 重新抓取（token 失效或首次访问）
         if _is_self(url):
             return msg_page("无法浏览",
-                            ["不能通过代理浏览本站自身，页面会无限嵌套。",
+                            ["不能通过代理浏览本站自身，别玩套娃了。",
                              '<a href="/browse">返回</a>'], back="/browse")
         if not _check_host(url):
             return msg_page("无法浏览", ["目标地址不可访问（仅支持公网 http/https 地址）"], back="/browse")
         ok, why = _allowed_by_robots(url)
         if not ok:
             return msg_page("被 robots.txt 拒绝",
-                            [why or "", "出于对网站规则的尊重，不抓取该页面。",
+                            [why or "", "出于对网站规则的尊重，不抓取该页面。我不想成为别有用心之人的武器。",
                              '<a href="/browse">返回</a>'], back="/browse")
         # 表单代理提交：除 url/t/page 外的 GET 参数并入目标地址
         extra = [(k, v) for k, v in request.args.items()
