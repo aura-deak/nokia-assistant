@@ -50,6 +50,17 @@ tests/        端到端测试与 mock 服务
 - AI 生成流式：`requests.stream=True` 解析 SSE delta，每 0.6s 写库；状态 `pending/streaming/done`，页面自动刷新。
 - 小说快照：诺基亚浏览器快照格式，内置 `nokia_read_novel` 的逆向成果。
 
+## 介绍视频
+
+项目介绍片在 `~/Videos/nokia-intro/`，渲染脚本 `render2.py`，成片固定输出到
+`~/Videos/nokia-intro/nokia-assistant-intro-v2.mp4`。Kdenlive 制作，画布 720x1280，
+旁白用 Edge TTS 的「云夏」音色，字幕从 Kdenlive 字幕轨提取。成片约 178 秒，
+结构：项目简介 → 授权页（GPL v3，署名 aura-deak）→ 三块功能介绍 → 实机演示
+（演示注释随字幕切换）→ 结尾页（GitHub 地址 + 「本视频使用 Kdenlive 制作」）。
+
+改脚本后重渲染：`cd ~/Videos/nokia-intro && python3 render2.py`，跑完会更新同一个
+成片文件。视频里出现的站点网址和 IP 属于部署信息，记在 `other.md`。
+
 ## 运行与测试
 
 ```sh
