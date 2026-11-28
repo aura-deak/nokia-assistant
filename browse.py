@@ -10,6 +10,7 @@ import socket
 import threading
 import time
 from urllib.parse import quote, urlencode, urljoin, urlparse
+from urllib.robotparser import RobotFileParser
 
 import requests
 import ssrfguard
@@ -53,6 +54,59 @@ _INLINE_KEEP = {"span", "b", "i", "em", "strong", "u", "s", "code", "small",
                 "font", "big", "sub", "sup", "abbr", "cite", "q", "time",
                 "mark", "var", "kbd", "tt"}
 
+# robots.txt 缓存：origin -> (parsed, ts)，避免每次浏览都再拉一次
+_ROBOTS_CACHE = {}
+_ROBOTS_LOCK = threading.Lock()
+_ROBOTS_TTL = 3600
+_ROBOTS_UA = "NokiaAssistantProxy"
+
+
+def _origin(url):
+    p = urlparse(url)
+    return "%s://%s" % (p.scheme, p.netloc)
+
+
+def _fetch_robots(origin):
+    """抓取并解析 robots.txt，失败/超时时返回 None（按宽松处理）。"""
+    try:
+        rp = RobotFileParser()
+        # 走普通请求，ssrfguard 已在 _check_host 验过主机
+        r = _http_get(origin + "/robots.txt",
+                      timeout=(6, 12), allow_redirects=True,
+                      headers={"User-Agent": _ROBOTS_UA + "/1.0"})
+        if r.status_code == 200:
+            rp.parse(r.text.splitlines())
+            return rp
+    except requests.exceptions.RequestException:
+        pass
+    except Exception:
+        pass
+    return None
+
+
+def _allowed_by_robots(url):
+    """检查目标 URL 是否被 robots.txt 允许；拿不到 robots.txt 视为允许。"""
+    o = _origin(url)
+    now = time.time()
+    with _ROBOTS_LOCK:
+        entry = _ROBOTS_CACHE.get(o)
+        if entry and now - entry["ts"] < _ROBOTS_TTL:
+            rp = entry["rp"]
+        else:
+            rp = None
+    if rp is None:
+        rp = _fetch_robots(o) or True  # None 表示宽松放行
+        with _ROBOTS_LOCK:
+            _ROBOTS_CACHE[o] = {"rp": rp, "ts": now}
+            if len(_ROBOTS_CACHE) > 64:
+                oldest = min(_ROBOTS_CACHE.items(), key=lambda kv: kv[1]["ts"])[0]
+                _ROBOTS_CACHE.pop(oldest, None)
+    if rp is True:
+        return True, None
+    if not rp.can_fetch(_ROBOTS_UA, url):
+        return False, "目标网站的 robots.txt 禁止抓取该路径。"
+    return True, None
+
 
 def _check_host(url):
     """ssrfguard 策略检查：仅 http/https，拒绝内网地址与非常用端口。"""
@@ -90,13 +144,26 @@ def _fetch(url):
     r.raw.close()
     body = b"".join(chunks)
     ctype = (r.headers.get("Content-Type") or "").split(";")[0].strip().lower()
-    # 编码：HTTP 头 -> 页面声明由 bs4 处理；兜底用字符集检测
-    if r.encoding is None:
+    # 编码自动识别与统一转码：HTTP 头声明 -> HTML meta 声明 -> 字符集探测，
+    # 最终都转成 UTF-8 字符串
+    enc = (r.encoding or "").strip()
+    if enc in ("ISO-8859-1", "iso-8859-1", "latin-1", None, ""):
+        # requests 拿不到 charset 时默认 latin-1，不可信，改为嗅探
+        enc = ""
+        head = body[:4096].decode("ascii", errors="ignore")
+        m = re.search(r'charset\s*=\s*["\']?\s*([A-Za-z0-9_\-]+)', head, re.I)
+        if m:
+            enc = m.group(1)
+    if not enc:
         try:
-            r.encoding = r.apparent_encoding or "utf-8"
+            from bs4 import UnicodeDammit
+            enc = UnicodeDammit(body).original_encoding or "utf-8"
         except Exception:
-            r.encoding = "utf-8"
-    text = body.decode(r.encoding or "utf-8", errors="replace")
+            enc = "utf-8"
+    try:
+        text = body.decode(enc, errors="replace")
+    except (LookupError, UnicodeDecodeError):
+        text = body.decode("utf-8", errors="replace")
     return r, text, ctype
 
 
@@ -383,6 +450,11 @@ def browse_page():
         # 重新抓取（token 失效或首次访问）
         if not _check_host(url):
             return msg_page("无法浏览", ["目标地址不可访问（仅支持公网 http/https 地址）"], back="/browse")
+        ok, why = _allowed_by_robots(url)
+        if not ok:
+            return msg_page("被 robots.txt 拒绝",
+                            [why or "", "出于对网站规则的尊重，不抓取该页面。",
+                             '<a href="/browse">返回</a>'], back="/browse")
         # 表单代理提交：除 url/t/page 外的 GET 参数并入目标地址
         extra = [(k, v) for k, v in request.args.items()
                  if k not in ("url", "t", "page") and v]
@@ -440,7 +512,8 @@ def browse_search():
     q = (request.args.get("q") or "").strip()
     if not q:
         return render_template("browse/index.html")
-    url = "https://cn.bing.com/search?q=" + quote(q, safe="")
+    # 必应 robots.txt 禁止 /search，改用允许全站抓取的 DuckDuckGo
+    url = "https://html.duckduckgo.com/html/?q=" + quote(q, safe="")
     return _redirect_proxy(url)
 
 

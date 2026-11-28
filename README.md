@@ -14,6 +14,8 @@
 
 抓取用 [ssrfguard](https://pypi.org/project/ssrfguard/) 做防护。它先把域名解析出来，校验每个地址，然后直连这个已验证的 IP，域名中途改指向骗不过去，重定向的每一跳同样检查。内网地址和 80/443/8080 以外的端口直接拒绝。
 
+抓取前会读取目标站点的 `robots.txt`，被禁止的路径直接拦下（按站点缓存 1 小时，UA 为 `NokiaAssistantProxy`），拿不到 robots.txt 视为允许。页面编码自动识别并统一转成 UTF-8（HTTP 头声明 → HTML meta 声明 → 字符集探测），老站的 GBK/GB2312 也不会乱码。内置搜索改用允许全站抓取的 DuckDuckGo HTML 版（必应的 robots.txt 禁止 `/search`）。
+
 ### AI 对话 `/ai/`
 
 兼容 OpenAI 的 `/chat/completions` 接口，模型分三档：
