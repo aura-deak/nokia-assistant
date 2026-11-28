@@ -2,6 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
+{% block head %}{% endblock %}
 <title>{% block title %}诺基亚助手{% endblock %}</title>
 </head>
 <body>
@@ -9,7 +10,7 @@
 <hr>
 {% block body %}{% endblock %}
 <hr>
-<p>[<a href="/" accesskey="0">主页</a>] [<a href="/browse" accesskey="1">浏览</a>] [<a href="/ai/" accesskey="2">AI</a>] [<a href="/novel" accesskey="3">小说</a>]</p>
+<p>[<a href="/" accesskey="0">主页</a>] [<a href="/browse" accesskey="1">浏览</a>] [<a href="/ai/" accesskey="2">AI</a>] [<a href="/novel" accesskey="3">小说</a>] [<a href="/dict" accesskey="4">词典</a>] [<a href="/search" accesskey="5">搜索</a>] [<a href="/game" accesskey="6">游戏</a>]</p>
 <hr>
 <p>作者 aura-deak · <a href="https://github.com/aura-deak/nokia-assistant">GitHub</a></p>
 </body>

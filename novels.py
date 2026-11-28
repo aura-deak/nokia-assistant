@@ -7,10 +7,12 @@ import re
 import secrets
 import threading
 
-from flask import (Blueprint, abort, redirect, render_template, request, session)
+from flask import (Blueprint, abort, redirect, render_template, request, session,
+                   make_response)
 
 from db import get_db, NOVEL_DIR
 from helpers import current_user, is_privileged, login_required, msg_page, now_str
+from snapshot import create_snapshot
 
 bp = Blueprint("novel", __name__)
 
@@ -19,6 +21,7 @@ MAX_TOTAL_BYTES = 50 * 1024 * 1024   # 同名单本分段上传累计上限
 PAGE_CHARS = 500           # 阅读页每页字符数（硬切）
 CHAPTERS_PER_PAGE = 40     # 目录每页章节数
 QUOTA_BYTES = 2 * 1024 * 1024   # 普通用户书库总容量；特权用户无上限
+SNAPSHOT_URL = "http://nokia.assistant/novel"   # 快照内伪装的来源地址
 
 # 文本内存缓存：novel_id -> 全文（限制数量防止占满内存）
 _TEXT_CACHE = {}
@@ -378,3 +381,66 @@ def delete(nid):
     except OSError:
         pass
     return redirect("/novel")
+
+
+def _snapshot_response(html_bytes, filename, url=SNAPSHOT_URL):
+    """把 HTML 正文包装成诺基亚快照，作为 .html 附件下发。"""
+    data = create_snapshot(html_bytes, url=url)
+    resp = make_response(data)
+    resp.headers["Content-Type"] = "application/octet-stream"
+    resp.headers["Content-Disposition"] = (
+        'attachment; filename="%s.html"' % (filename or "novel"))
+    return resp
+
+
+def _novel_full_html(novel, text, chapters):
+    """把整本小说拼成一份含章节标题的简单 HTML。"""
+    title = novel["title"] or "小说"
+    parts = ["<!doctype html><html><head><meta charset=\"utf-8\">",
+             "<title>%s</title></head><body>" % html_mod.escape(title),
+             "<h1>%s</h1>" % html_mod.escape(title)]
+    if not chapters:
+        chapters = [{"t": "全文", "o": 0}]
+    for i, ch in enumerate(chapters):
+        seg = _chapter_slice(text, chapters, i)
+        parts.append("<h2>%s</h2>" % html_mod.escape(ch["t"]))
+        parts.append("<p>" + html_mod.escape(seg).replace("\n", "<br>") + "</p>")
+    parts.append("</body></html>")
+    return "".join(parts).encode("utf-8")
+
+
+@bp.route("/n/<code>/snapshot")
+def snapshot(code):
+    """把整本小说下载为诺基亚浏览器快照文件（离线可读）。"""
+    novel = _get_novel(code)
+    text = _get_text(novel["id"])
+    if text is None:
+        return msg_page("错误", ["小说文件丢失，请联系上传者"], back="/n/%s" % code)
+    chapters = json.loads(novel["chapters"] or "[]")
+    body = _novel_full_html(novel, text, chapters)
+    return _snapshot_response(body, novel["title"], url="http://nokia.assistant/n/%s" % code)
+
+
+@bp.route("/novel/convert", methods=["GET", "POST"])
+@login_required
+def convert():
+    """上传 TXT，直接下载为诺基亚浏览器快照（不入库）。"""
+    if request.method == "GET":
+        return render_template("novel/convert.html")
+    data = None
+    f = request.files.get("novel_file")
+    if f and f.filename:
+        data = f.read(MAX_NOVEL_BYTES + 1)
+        if len(data) > MAX_NOVEL_BYTES:
+            return msg_page("文件过大", ["TXT 文件不能超过 15MB"], back="/novel/convert")
+    if not data:
+        pasted = (request.form.get("content") or "").strip()
+        if not pasted:
+            return msg_page("提示", ["请选择 TXT 文件或直接粘贴文本"], back="/novel/convert")
+        data = pasted.encode("utf-8")
+        if len(data) > MAX_NOVEL_BYTES:
+            return msg_page("内容过大", ["文本不能超过 15MB"], back="/novel/convert")
+    text = _decode_text(data).replace("\r\n", "\n").replace("\r", "\n").strip("\ufeff")
+    title = (request.form.get("title") or "").strip()[:60]
+    body = _novel_full_html({"title": title or "小说"}, text, _detect_chapters(text))
+    return _snapshot_response(body, title or "novel")

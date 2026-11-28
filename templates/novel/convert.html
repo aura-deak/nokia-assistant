@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}TXT 转快照 - 云小说{% endblock %}
+{% block body %}
+<p>[<a href="/novel">返回书架</a>]</p>
+<h2>TXT 转诺基亚快照</h2>
+<p>上传 TXT（UTF-8/GBK/Big5/UTF-16 自动识别）或粘贴文本，浏览器会直接下载一个 .html 快照文件。</p>
+<p>把这个文件放进诺基亚手机的存储卡，用内置浏览器打开即可离线阅读。不入书库，不占容量。</p>
+<form method="post" action="/novel/convert" enctype="multipart/form-data">
+<p>书名(可选):<br><input type="text" name="title" size="28"></p>
+<p>选择 TXT 文件:<br><input type="file" name="novel_file"></p>
+<p>或直接粘贴文本:<br><textarea name="content" rows="8" cols="28"></textarea></p>
+<p><input type="submit" value="下载快照"></p>
+</form>
+{% endblock %}

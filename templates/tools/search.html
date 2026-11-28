@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}搜索 - 诺基亚助手{% endblock %}
+{% block body %}
+<h2>搜索</h2>
+<p>免费公开接口，返回维基百科相关词条，点开后走网页辅助浏览打开。</p>
+<form method="get" action="/search">
+<p>关键词:<br><input type="text" name="q" size="28" value="{{ q }}"></p>
+<p><input type="submit" value="搜索"></p>
+</form>
+{% if hits is not none %}
+<hr>
+{% if hits %}
+{% for h in hits %}
+<p><b>{{ loop.index }}.</b> <a href="{{ h.url }}">{{ h.title }}</a><br>{{ h.snip }}</p>
+{% endfor %}
+{% else %}
+<p>没有找到相关结果，换个关键词试试。</p>
+{% endif %}
+{% endif %}
+{% endblock %}

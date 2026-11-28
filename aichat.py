@@ -1,5 +1,6 @@
-"""AI 对话：OpenAI 兼容接口。非流式；生成在服务端后台线程进行，
-功能机浏览器手动刷新即可看到新回复。
+"""AI 对话：OpenAI 兼容接口，流式生成。生成在服务端后台线程进行，
+状态分「等待开始输出」(pending) 与「正在输出」(streaming)，
+页面带 meta 自动刷新，功能机浏览器无需手动刷新即可看到回复增长。
 - 未登录游客：使用 data/api_keys.json 里的免费模型（radeon / NIM）；
 - 特权用户（config.json）：额外可用 127.0.0.1:1234 的 magpie 聚合模型；
 - 登录用户：也可配置个人接口（随账号保存）。
@@ -8,6 +9,7 @@
 import datetime
 import json
 import threading
+import time
 
 import requests
 from flask import (Blueprint, abort, redirect, render_template, request,
@@ -22,6 +24,7 @@ bp = Blueprint("ai", __name__, url_prefix="/ai")
 CONTEXT_MESSAGES = 12          # 每次请求携带的历史条数
 GEN_TIMEOUT = (10, 180)        # 连接/读超时
 GUEST_TTL_DAYS = 7             # 游客会话保留天数
+FLUSH_INTERVAL = 0.6           # 流式内容写库的最小间隔（秒）
 _GEN_LOCKS = {}
 _GEN_LOCKS_GUARD = threading.Lock()
 
@@ -150,16 +153,50 @@ def _generate(cid):
             payload["temperature"] = temp
 
         try:
+            sse_payload = dict(payload)
+            sse_payload["stream"] = True
             r = requests.post(_completions_url(base_url),
                               headers={"Authorization": "Bearer " + api_key,
-                                       "Content-Type": "application/json"},
-                              json=payload, timeout=GEN_TIMEOUT)
+                                       "Content-Type": "application/json",
+                                       "Accept": "text/event-stream"},
+                              json=sse_payload, timeout=GEN_TIMEOUT, stream=True)
             if r.status_code != 200:
                 return fail("接口返回 HTTP %d: %s" % (r.status_code, r.text[:200]))
-            data = r.json()
-            content = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
+            r.encoding = "utf-8"   # SSE 响应常无 charset，不指定会被当 latin1 解成乱码
+            content = ""
+            got_token = False
+            last_flush = time.monotonic()
+            for raw in r.iter_lines(decode_unicode=True):
+                if not raw:
+                    continue
+                line = raw.strip()
+                if line.startswith("data:"):
+                    line = line[5:].strip()
+                if line == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(line)
+                except ValueError:
+                    continue
+                try:
+                    delta = (chunk.get("choices") or [{}])[0].get("delta", {})
+                except (AttributeError, IndexError, TypeError):
+                    delta = {}
+                piece = delta.get("content") if isinstance(delta, dict) else None
+                if piece:
+                    content += piece
+                    if not got_token:
+                        con.execute("UPDATE messages SET status='streaming', content=? "
+                                    "WHERE id=?", (content, pending["id"]))
+                        con.commit()
+                        got_token = True
+                    elif time.monotonic() - last_flush >= FLUSH_INTERVAL:
+                        con.execute("UPDATE messages SET content=? WHERE id=?",
+                                    (content, pending["id"]))
+                        con.commit()
+                        last_flush = time.monotonic()
             if not content:
-                return fail("接口未返回内容: " + json.dumps(data, ensure_ascii=False)[:300])
+                return fail("接口未返回内容")
             con.execute("UPDATE messages SET status='done', content=? WHERE id=?",
                         (content, pending["id"]))
             con.execute("UPDATE conversations SET updated_at=? WHERE id=?",
@@ -267,8 +304,9 @@ def new_conv():
     cid = cur.lastrowid
     db.execute("INSERT INTO messages(conv_id,role,content,model,status,created_at) VALUES(?,?,?,?,?,?)",
                (cid, "user", content, model, "", now_str()))
-    db.execute("INSERT INTO messages(conv_id,role,content,model,status,created_at) VALUES(?,?,?,?,?,?)",
-               (cid, "assistant", "", model, "pending", now_str()))
+    db.execute("INSERT INTO messages(conv_id,role,content,model,status,created_at,started_at) "
+               "VALUES(?,?,?,?,?,?,?)",
+               (cid, "assistant", "", model, "pending", now_str(), time.time()))
     db.commit()
     _start_generation(cid)
     return redirect("/ai/c/%d" % cid)
@@ -279,10 +317,26 @@ def chat(cid):
     user = current_user()
     db = get_db()
     conv = _own_conv(db, cid, user)
-    msgs = db.execute("SELECT * FROM messages WHERE conv_id=? ORDER BY id", (cid,)).fetchall()
+    rows = db.execute("SELECT * FROM messages WHERE conv_id=? ORDER BY id", (cid,)).fetchall()
+    now_ts = time.time()
+    msgs = []
+    for row in rows:
+        m = dict(row)
+        if m["status"] in ("pending", "streaming") and m.get("started_at"):
+            m["elapsed"] = max(0, int(now_ts - m["started_at"]))
+        else:
+            m["elapsed"] = 0
+        msgs.append(m)
     opts, default_model = model_options(user, _personal_model(user))
+    auto_refresh = any(m["status"] in ("pending", "streaming") for m in msgs)
+    gen_state = "done"
+    for m in reversed(msgs):
+        if m["role"] == "assistant":
+            gen_state = m["status"] or "done"
+            break
     return render_template("ai/chat.html", conv=conv, msgs=msgs,
-                           opts=opts, default_model=default_model)
+                           opts=opts, default_model=default_model,
+                           auto_refresh=auto_refresh, gen_state=gen_state)
 
 
 @bp.route("/c/<int:cid>/send", methods=["POST"])
@@ -298,8 +352,9 @@ def send(cid):
     model = _pick_model(user)
     db.execute("INSERT INTO messages(conv_id,role,content,model,status,created_at) VALUES(?,?,?,?,?,?)",
                (cid, "user", content, model, "", now_str()))
-    db.execute("INSERT INTO messages(conv_id,role,content,model,status,created_at) VALUES(?,?,?,?,?,?)",
-               (cid, "assistant", "", model, "pending", now_str()))
+    db.execute("INSERT INTO messages(conv_id,role,content,model,status,created_at,started_at) "
+               "VALUES(?,?,?,?,?,?,?)",
+               (cid, "assistant", "", model, "pending", now_str(), time.time()))
     db.commit()
     _start_generation(cid)
     return redirect("/ai/c/%d" % cid)
@@ -316,9 +371,9 @@ def retry(cid):
         if last["status"] != "pending":
             model = last["model"]
             db.execute("DELETE FROM messages WHERE id=?", (last["id"],))
-            db.execute("INSERT INTO messages(conv_id,role,content,model,status,created_at) "
-                       "VALUES(?,?,?,?,?,?)",
-                       (cid, "assistant", "", model, "pending", now_str()))
+            db.execute("INSERT INTO messages(conv_id,role,content,model,status,created_at,started_at) "
+                       "VALUES(?,?,?,?,?,?,?)",
+                       (cid, "assistant", "", model, "pending", now_str(), time.time()))
             db.commit()
             _start_generation(cid)
     return redirect("/ai/c/%d" % cid)

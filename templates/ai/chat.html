@@ -1,14 +1,21 @@
 {% extends "base.html" %}
 {% block title %}{{ conv.title }} - AI 对话{% endblock %}
+{% block head %}{% if auto_refresh %}<meta http-equiv="refresh" content="4">{% endif %}{% endblock %}
 {% block body %}
-<p>[<a href="/ai/">返回列表</a>] [<a href="/ai/c/{{ conv.id }}">刷新本页</a>]</p>
+<p>[<a href="/ai/">返回列表</a>] [<a href="/ai/c/{{ conv.id }}">刷新本页</a>]
+{% if gen_state == 'pending' %}| 状态: 等待中
+{% elif gen_state == 'streaming' %}| 状态: 输出中
+{% elif gen_state == 'error' %}| 状态: 出错
+{% else %}| 状态: 已完成{% endif %}</p>
 {% if not user %}<p>游客模式 [<a href="/login">登录</a>]</p>{% endif %}
 <h2>{{ conv.title }}</h2>
 {% for m in msgs %}
 {% if m.role == 'user' %}
 <p><b>你:</b> {{ m.content|nl2br }}</p>
 {% elif m.status == 'pending' %}
-<p><b>AI:</b> （正在生成回复，请稍后点顶部「刷新本页」）</p>
+<p><b>AI:</b> （等待 AI 开始输出… {{ m.elapsed }}s）</p>
+{% elif m.status == 'streaming' %}
+<p><b>AI:</b> {{ m.content|nl2br }}<br><small>[AI 正在输出… {{ m.elapsed }}s]</small></p>
 {% elif m.status == 'error' %}
 <p><b>AI:</b> 生成失败: {{ m.content|nl2br }}</p>
 <form method="post" action="/ai/c/{{ conv.id }}/retry">

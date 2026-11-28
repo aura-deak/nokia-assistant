@@ -316,7 +316,7 @@ try:
     chat_url = BASE + r.headers["Location"]
     time.sleep(0.3)
     r0 = s.get(chat_url)
-    pending = "正在生成" in r0.text
+    pending = ("等待 AI 开始输出" in r0.text) or ("正在输出" in r0.text)
     time.sleep(3)
     r = s.get(chat_url)
     check("后台生成完成可刷新查看", "收到你的消息" in r.text and "第二行用于测试换行渲染" in r.text, r.text)

@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}词典 - 诺基亚助手{% endblock %}
+{% block body %}
+<h2>词典</h2>
+<p>免费公开接口，英英词典，含音标、词性、释义。</p>
+<form method="get" action="/dict">
+<p>单词:<br><input type="text" name="q" size="28" value="{{ word }}"></p>
+<p><input type="submit" value="查询"></p>
+</form>
+{% if result %}
+<hr>
+<p><b>{{ result.word }}</b>{% if result.phonetic %} {{ result.phonetic }}{% endif %}</p>
+{% if result.not_found %}
+<p>没找到这个单词，检查拼写后重试。</p>
+{% else %}
+{% for s in result.senses %}
+<p>{% if s.pos %}<i>{{ s.pos }}</i><br>{% endif %}{{ s.def }}{% if s.example %}<br>例: {{ s.example }}{% endif %}</p>
+{% endfor %}
+{% endif %}
+{% endif %}
+{% endblock %}

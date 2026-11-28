@@ -30,12 +30,31 @@ class H(BaseHTTPRequestHandler):
         req = json.loads(self.rfile.read(n))
         if not self.path.endswith("/chat/completions"):
             return self._send({"error": "not found"}, 404)
-        if req.get("stream"):
-            return self._send({"error": "this mock is non-streaming"}, 400)
-        time.sleep(2)  # 模拟生成耗时，测试“手动刷新”设计
         last_user = next(m["content"] for m in reversed(req["messages"]) if m["role"] == "user")
         reply = "(模型=%s) 收到你的消息: 「%s」。这是一条由模拟接口返回的非流式回复，共两行。\n第二行用于测试换行渲染。" % (
             req.get("model", "?"), last_user[:50])
+        if req.get("stream"):
+            # 模拟 SSE：分片推送，最后以 [DONE] 结束
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            # 先发一个空角色帧（真实接口常见），测试「等待开始输出」
+            self.wfile.write(b'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n')
+            self.wfile.flush()
+            time.sleep(1)
+            for ch in reply:
+                chunk = {"choices": [{"delta": {"content": ch}}]}
+                line = "data: " + json.dumps(chunk, ensure_ascii=False) + "\n\n"
+                self.wfile.write(line.encode("utf-8"))
+                self.wfile.flush()
+                time.sleep(0.005)
+            self.wfile.write(b"data: [DONE]\n\n")
+            self.wfile.flush()
+            self.close_connection = True
+            return
+        time.sleep(2)
         return self._send({
             "choices": [{"message": {"role": "assistant", "content": reply}}]
         })

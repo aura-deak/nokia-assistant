@@ -12,6 +12,8 @@ import auth
 import browse
 import aichat
 import novels
+import tools
+import game
 import ratelimit
 
 
@@ -48,6 +50,8 @@ def create_app():
     app.register_blueprint(browse.bp)
     app.register_blueprint(aichat.bp)
     app.register_blueprint(novels.bp)
+    app.register_blueprint(tools.bp)
+    app.register_blueprint(game.bp)
 
     @app.route("/")
     def index():

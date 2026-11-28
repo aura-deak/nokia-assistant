@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}52周奋斗 - 诺基亚助手{% endblock %}
+{% block body %}
+{% if s.over %}
+<h2>游戏结束</h2>
+<p>共参与 {{ s.week }}/52 周，总成就 {{ s.achievements|sum }}。</p>
+<p>[<a href="/game?new=1">重新开始</a>]</p>
+{% else %}
+<h2>52周奋斗</h2>
+<p>第 <b>{{ s.week + 1 }}</b>/52 周 · 精力 {{ s.energy }}/20 · 灵感 {{ s.inspiration }}/20</p>
+<p>本周成就: <b>{% if s.week > 0 %}{{ s.achievements[s.week-1] }}{% else %}—{% endif %}</b></p>
+<p>总成就: <b>{{ s.achievements|sum }}</b></p>
+<p>选择: 休息(精力+5 灵感+3) 或 奋斗(精力-5 灵感-3，成就+7+随机)</p>
+<form method="post" action="/game/act">
+<p><input type="submit" name="c" value="r"> 休息<br>
+<input type="submit" name="c" value="f"> 奋斗</p>
+</form>
+{% endif %}
+<hr>
+{% if s.log %}
+<p><b>最近记录</b></p>
+{% for line in s.log[:6] %}
+<p>{{ line }}</p>
+{% endfor %}
+{% endif %}
+{% endblock %}

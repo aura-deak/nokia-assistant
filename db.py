@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS messages (
     content TEXT DEFAULT '',
     model TEXT DEFAULT '',
     status TEXT DEFAULT '',
+    started_at REAL DEFAULT 0,
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS novels (
@@ -97,3 +98,5 @@ def _migrate(con):
     cols = [r[1] for r in con.execute("PRAGMA table_info(messages)")]
     if "model" not in cols:
         con.execute("ALTER TABLE messages ADD COLUMN model TEXT DEFAULT ''")
+    if "started_at" not in cols:
+        con.execute("ALTER TABLE messages ADD COLUMN started_at REAL DEFAULT 0")
